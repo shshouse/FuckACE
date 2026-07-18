@@ -1,6 +1,6 @@
 [package]
 name = "FuckACE"
-version = "0.9.5"
+version = "0.9.6"
 description = "FuckACE是一个用来优化ACE游戏的免安装开源工具"
 authors = ["shshouse"]
 edition = "2021"

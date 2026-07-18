@@ -82,6 +82,8 @@ function App() {
   const [cleaning, setCleaning] = useState(false);
   const [autoMemoryCleanOnGameStart, setAutoMemoryCleanOnGameStart] = useState(false);
   const [hasAutoCleanedForGame, setHasAutoCleanedForGame] = useState(false);
+  const [autoMemoryCleanThreshold, setAutoMemoryCleanThreshold] = useState<number | null>(null);
+  const lastThresholdCleanRef = useRef(0);
 
   const gameProcesses = performance.map((process) => process.name);
   const { announcements, latestVersion, hasUpdate, fetchError } = useInitialData(APP_VERSION);
@@ -353,6 +355,10 @@ function App() {
     if (typeof cachedChoices.autoMemoryCleanOnGameStart==='boolean'){
       setAutoMemoryCleanOnGameStart(cachedChoices.autoMemoryCleanOnGameStart);
     }
+
+    if (typeof cachedChoices.autoMemoryCleanThreshold === 'number') {
+      setAutoMemoryCleanThreshold(cachedChoices.autoMemoryCleanThreshold);
+    }
   }, []);
 
   useEffect(() => {
@@ -365,6 +371,7 @@ function App() {
       autoRestrict,
       autoMemoryCleanOnGameStart,
       rememberChoices: true,
+      autoMemoryCleanThreshold,
     } as Parameters<typeof storage.saveChoices>[0] & {
       autoMemoryCleanOnGameStart: boolean;
     });
@@ -376,6 +383,7 @@ function App() {
     enableMemoryPriority,
     autoRestrict,
     autoMemoryCleanOnGameStart,
+    autoMemoryCleanThreshold,
   ]);
 
   useEffect(() => {
@@ -426,6 +434,19 @@ function App() {
     performance,
     performCleanup,
   ]);
+
+  useEffect(() => {
+    if (autoMemoryCleanThreshold === null || !memoryStatus || cleaning) return;
+    if (memoryStatus.memory_percent < autoMemoryCleanThreshold) return;
+
+    const now = Date.now();
+    const COOLDOWN_MS = 5 * 60 * 1000;
+    if (now - lastThresholdCleanRef.current < COOLDOWN_MS) return;
+
+    lastThresholdCleanRef.current = now;
+    addLog(`内存占用 ${memoryStatus.memory_percent.toFixed(0)}% 超过阈值 ${autoMemoryCleanThreshold}%，自动清理...`);
+    void performCleanup();
+  }, [autoMemoryCleanThreshold, memoryStatus, cleaning, addLog, performCleanup]);
 
   useEffect(() => {
     if (hasUpdate) {
@@ -509,7 +530,9 @@ function App() {
                 status={memoryStatus}
                 cleaning={cleaning}
                 autoMemoryCleanEnabled={autoMemoryCleanOnGameStart}
+                autoMemoryCleanThreshold={autoMemoryCleanThreshold}
                 onAutoMemoryCleanChange={setAutoMemoryCleanOnGameStart}
+                onThresholdChange={setAutoMemoryCleanThreshold}
                 onCleanNow={() => {
                   void performCleanup();
                 }}
