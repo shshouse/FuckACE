@@ -13,7 +13,7 @@
 反馈问题，或者有什么建议都可以说喵＞﹏＜
 - [提出建议！](https://github.com/shshouse/FuckACE/issues/new)
 
-<img width="1349" height="1124" alt="image" src="https://github.com/user-attachments/assets/1cf27be7-f81e-457f-80de-4ff45da3f78a" />
+<img width="1350" height="1200" alt="image" src="https://github.com/user-attachments/assets/72702cfd-728c-483a-939b-c86d894c0eb4" />
 
 ## 注意事项：
 ### 1.对于ACE
