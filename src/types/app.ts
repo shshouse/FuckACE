@@ -1,5 +1,5 @@
 export interface ProcessStatus {
-  target_core: number;
+  target_cores: number[];
   sguard64_found: boolean;
   sguard64_restricted: boolean;
   sguardsvc64_found: boolean;

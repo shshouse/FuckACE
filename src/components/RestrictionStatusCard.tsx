@@ -3,10 +3,18 @@ import type { ChipProps } from '@mui/material/Chip';
 import type { ProcessStatus } from '../types/app';
 
 interface RestrictionStatusCardProps {
-  targetCore: number | null;
+  targetCores: number[];
   gameProcesses: string[];
   processStatus: ProcessStatus | null;
   loading: boolean;
+}
+
+function formatCores(cores: number[]): string {
+  if (cores.length <= 4) {
+    return cores.join(',');
+  }
+
+  return `${cores.slice(0, 4).join(',')} 等${cores.length}颗`;
 }
 
 function getProcessStatusColor(found: boolean, restricted: boolean): ChipProps['color'] {
@@ -26,7 +34,7 @@ function getProcessStatusText(found: boolean, restricted: boolean) {
 }
 
 export function RestrictionStatusCard({
-  targetCore,
+  targetCores,
   gameProcesses,
   processStatus,
   loading,
@@ -40,7 +48,7 @@ export function RestrictionStatusCard({
         <Box display="flex" justifyContent="space-between" alignItems="center">
           <Typography variant="body2">目标核心:</Typography>
           <Chip
-            label={targetCore !== null ? `核心 ${targetCore}` : '检测中...'}
+            label={targetCores.length > 0 ? `核心 ${formatCores(targetCores)}` : '检测中...'}
             color="info"
             variant="outlined"
             size="small"

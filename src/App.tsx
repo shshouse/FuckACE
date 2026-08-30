@@ -4,6 +4,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Box, Container, CssBaseline, ThemeProvider } from '@mui/material';
 import { ActiveActionsCard } from './components/ActiveActionsCard';
 import { AppHeader } from './components/AppHeader';
+import { AffinityCoreDialog } from './components/dialogs/AffinityCoreDialog';
 import { FetchErrorSnackbar } from './components/FetchErrorSnackbar';
 import { LogPanel } from './components/LogPanel';
 import { MemoryCleanCard } from './components/MemoryCleanCard';
@@ -58,7 +59,7 @@ const restrictionSettingKeys: RestrictionSettingKey[] = [
 
 function App() {
   const [isMonitoring, setIsMonitoring] = useState(false);
-  const [targetCore, setTargetCore] = useState<number | null>(null);
+  const [targetCores, setTargetCores] = useState<number[]>([]);
   const [processStatus, setProcessStatus] = useState<ProcessStatus | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(false);
@@ -77,6 +78,8 @@ function App() {
   const [hasAutoRestricted, setHasAutoRestricted] = useState(false);
   const [showAnnouncements, setShowAnnouncements] = useState(false);
   const [showUpdateDialog, setShowUpdateDialog] = useState(false);
+  const [showAffinityDialog, setShowAffinityDialog] = useState(false);
+  const [affinityCores, setAffinityCores] = useState<number[]>([]);
   const [exportingReport, setExportingReport] = useState(false);
   const [memoryStatus, setMemoryStatus] = useState<MemoryCleanStatus | null>(null);
   const [cleaning, setCleaning] = useState(false);
@@ -117,10 +120,11 @@ function App() {
         enableEfficiencyMode,
         enableIoPriority,
         enableMemoryPriority,
+        affinityCores,
       });
 
       setProcessStatus(result);
-      setTargetCore(result.target_core);
+      setTargetCores(result.target_cores);
       addLog(result.message);
     } catch (error) {
       addLog(`执行失败: ${error}`);
@@ -135,6 +139,7 @@ function App() {
     enableEfficiencyMode,
     enableIoPriority,
     enableMemoryPriority,
+    affinityCores,
   ]);
 
   const executeOnce = useCallback(async () => {
@@ -169,7 +174,7 @@ function App() {
       const info = await getSystemInfo();
 
       setSystemInfo(info);
-      setTargetCore(info.cpu_logical_cores - 1);
+      setTargetCores([info.cpu_logical_cores - 1]);
       addLog(`系统信息已加载: ${info.os_name} ${info.os_version}`);
       addLog(`CPU: ${info.cpu_model}`);
       addLog(`核心: ${info.cpu_cores}物理/${info.cpu_logical_cores}逻辑`);
@@ -359,6 +364,10 @@ function App() {
     if (typeof cachedChoices.autoMemoryCleanThreshold === 'number') {
       setAutoMemoryCleanThreshold(cachedChoices.autoMemoryCleanThreshold);
     }
+
+    if (Array.isArray(cachedChoices.affinityCores)) {
+      setAffinityCores(cachedChoices.affinityCores);
+    }
   }, []);
 
   useEffect(() => {
@@ -372,6 +381,7 @@ function App() {
       autoMemoryCleanOnGameStart,
       rememberChoices: true,
       autoMemoryCleanThreshold,
+      affinityCores,
     } as Parameters<typeof storage.saveChoices>[0] & {
       autoMemoryCleanOnGameStart: boolean;
     });
@@ -384,6 +394,7 @@ function App() {
     autoRestrict,
     autoMemoryCleanOnGameStart,
     autoMemoryCleanThreshold,
+    affinityCores,
   ]);
 
   useEffect(() => {
@@ -554,12 +565,14 @@ function App() {
               autoStartEnabled={autoStartEnabled}
               loading={loading}
               isMonitoring={isMonitoring}
+              affinityCustomized={affinityCores.length > 0}
               onSettingChange={handleSettingChange}
               onToggleAutoStartup={toggleAutoStartup}
+              onOpenAffinitySettings={() => setShowAffinityDialog(true)}
               onExecute={executeOnce}
             />
             <RestrictionStatusCard
-              targetCore={targetCore}
+              targetCores={targetCores}
               gameProcesses={gameProcesses}
               processStatus={processStatus}
               loading={loading}
@@ -586,6 +599,14 @@ function App() {
               void openExternalLink(latestVersion.download_url);
             }
           }}
+        />
+
+        <AffinityCoreDialog
+          open={showAffinityDialog}
+          logicalCores={systemInfo?.cpu_logical_cores ?? null}
+          value={affinityCores}
+          onConfirm={setAffinityCores}
+          onClose={() => setShowAffinityDialog(false)}
         />
 
         <FetchErrorSnackbar open={fetchError} />

@@ -24,7 +24,9 @@ export interface GameOptimizationAction extends LoggedCommandDefinition {
 type RestrictionExecutionOptions = Pick<
   RestrictionSettings,
   'enableCpuAffinity' | 'enableProcessPriority' | 'enableEfficiencyMode' | 'enableIoPriority' | 'enableMemoryPriority'
->;
+> & {
+  affinityCores?: number[];
+};
 
 const aceProcessNames = ['sguard64.exe', 'sguardsvc64.exe'];
 

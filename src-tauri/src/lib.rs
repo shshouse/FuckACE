@@ -8,7 +8,7 @@ use winreg::RegKey;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct RestrictResult {
-    target_core: u32,
+    target_cores: Vec<u32>,
     sguard64_found: bool,
     sguard64_restricted: bool,
     sguardsvc64_found: bool,
@@ -117,14 +117,34 @@ fn set_game_registry_priority(exe_name: &str, cpu: u32, io: u32) -> Result<Strin
     }
 }
 
-fn find_target_core() -> (u32, u64, bool) {
+fn resolve_affinity(custom_cores: Option<Vec<u32>>) -> (Vec<u32>, u64, bool, bool) {
     let mut system = System::new();
     system.refresh_cpu_all();
     let total_cores = system.cpus().len() as u32;
-    let target_core = if total_cores > 0 { total_cores - 1 } else { 0 };
-    let core_mask = 1u64 << target_core;
 
-    (target_core, core_mask, false)
+    if let Some(cores) = custom_cores {
+        let mut valid: Vec<u32> = cores
+            .into_iter()
+            .filter(|core| *core < total_cores && *core < 64)
+            .collect();
+        valid.sort_unstable();
+        valid.dedup();
+        if !valid.is_empty() {
+            let core_mask = valid.iter().fold(0u64, |mask, core| mask | (1u64 << core));
+            return (valid, core_mask, false, true);
+        }
+    }
+
+    let target_core = if total_cores > 0 { total_cores - 1 } else { 0 };
+    (vec![target_core], 1u64 << target_core, false, false)
+}
+
+fn format_core_mask(core_mask: u64) -> String {
+    (0..64)
+        .filter(|core| core_mask & (1u64 << core) != 0)
+        .map(|core| core.to_string())
+        .collect::<Vec<String>>()
+        .join(",")
 }
 
 fn set_process_affinity(pid: Pid, core_mask: u64) -> (bool, Option<String>) {
@@ -170,12 +190,11 @@ fn set_process_affinity_with_fallback(
     pid: Pid,
     primary_core_mask: u64,
     is_e_core: bool,
-) -> (bool, Option<String>, u32) {
+) -> (bool, Option<String>, u64) {
     let (success, error) = set_process_affinity(pid, primary_core_mask);
 
     if success || !is_e_core {
-        let core_id = primary_core_mask.trailing_zeros();
-        return (success, error, core_id);
+        return (success, error, primary_core_mask);
     }
 
     eprintln!("进程亲和性PID {} E-Core绑定失败，尝试备用方案", pid);
@@ -192,9 +211,9 @@ fn set_process_affinity_with_fallback(
             "[进程亲和性] PID {} 备用方案成功，已绑定到核心 {}",
             pid, fallback_core
         );
-        (true, None, fallback_core)
+        (true, None, fallback_mask)
     } else {
-        (false, fallback_error, fallback_core)
+        (false, fallback_error, fallback_mask)
     }
 }
 
@@ -389,7 +408,7 @@ fn restrict_single_process(
     core_mask: u64,
     is_e_core: bool,
 ) -> (bool, Vec<String>) {
-    let (affinity_ok, affinity_err, actual_core) = if enable_cpu_affinity {
+    let (affinity_ok, affinity_err, actual_mask) = if enable_cpu_affinity {
         set_process_affinity_with_fallback(pid, core_mask, is_e_core)
     } else {
         (false, None, 0)
@@ -421,7 +440,7 @@ fn restrict_single_process(
 
     let mut details = Vec::new();
     if affinity_ok {
-        details.push(format!("CPU亲和性→核心{}", actual_core));
+        details.push(format!("CPU亲和性→核心{}", format_core_mask(actual_mask)));
     } else if let Some(err) = &affinity_err {
         details.push(format!("CPU亲和性✗({})", err));
     } else {
@@ -452,13 +471,14 @@ fn restrict_target_processes(
     enable_efficiency_mode: bool,
     enable_io_priority: bool,
     enable_memory_priority: bool,
+    affinity_cores: Option<Vec<u32>>,
 ) -> RestrictResult {
     enable_debug_privilege();
 
     let mut system = System::new();
     system.refresh_processes(ProcessesToUpdate::All, true);
 
-    let (target_core, core_mask, is_e_core) = find_target_core();
+    let (target_cores, core_mask, is_e_core, is_custom) = resolve_affinity(affinity_cores);
 
     let mut sguard64_found = false;
     let mut sguard64_restricted = false;
@@ -505,7 +525,16 @@ fn restrict_target_processes(
     };
     message.push_str(&format!("限制模式: {}\n", mode_str));
 
-    message.push_str(&format!("绑定到最后一个逻辑核心 {}\n", target_core));
+    if is_custom {
+        let core_list = target_cores
+            .iter()
+            .map(|core| core.to_string())
+            .collect::<Vec<String>>()
+            .join(",");
+        message.push_str(&format!("绑定到自定义核心 {}\n", core_list));
+    } else {
+        message.push_str(&format!("绑定到最后一个逻辑核心 {}\n", target_cores[0]));
+    }
 
     for (pid, process) in system.processes() {
         let process_name = process.name().to_string_lossy().to_lowercase();
@@ -552,7 +581,7 @@ fn restrict_target_processes(
     }
 
     RestrictResult {
-        target_core,
+        target_cores,
         sguard64_found,
         sguard64_restricted,
         sguardsvc64_found,
@@ -569,6 +598,7 @@ async fn restrict_processes(
     enable_efficiency_mode: bool,
     enable_io_priority: bool,
     enable_memory_priority: bool,
+    affinity_cores: Option<Vec<u32>>,
 ) -> Result<RestrictResult, String> {
     let result = restrict_target_processes(
         enable_cpu_affinity,
@@ -576,6 +606,7 @@ async fn restrict_processes(
         enable_efficiency_mode,
         enable_io_priority,
         enable_memory_priority,
+        affinity_cores,
     );
     Ok(result)
 }
@@ -781,6 +812,82 @@ fn autostart_task_exists() -> bool {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
+}
+
+#[cfg(target_os = "windows")]
+fn get_autostart_task_command_path() -> Option<String> {
+    let output = std::process::Command::new("schtasks")
+        .args(["/query", "/tn", TASK_NAME, "/xml"])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    // schtasks 重定向输出时通常为UTF-16LE(带BOM)，兼容ANSI/UTF-8
+    let bytes = &output.stdout;
+    let xml = if bytes.len() >= 2 && bytes[0] == 0xff && bytes[1] == 0xfe {
+        let units: Vec<u16> = bytes[2..]
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect();
+        String::from_utf16_lossy(&units)
+    } else {
+        String::from_utf8_lossy(bytes).to_string()
+    };
+
+    extract_task_command(&xml)
+}
+
+#[cfg(target_os = "windows")]
+fn extract_task_command(xml: &str) -> Option<String> {
+    let start = xml.find("<Command>")? + "<Command>".len();
+    let end = xml[start..].find("</Command>")? + start;
+    Some(xml[start..end].trim().to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn unescape_xml_text(value: &str) -> String {
+    value
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&")
+}
+
+#[cfg(target_os = "windows")]
+fn paths_equivalent(left: &str, right: &str) -> bool {
+    let normalize = |path: &str| path.replace('/', "\\").to_lowercase();
+    normalize(left) == normalize(right)
+}
+
+#[cfg(target_os = "windows")]
+fn self_heal_autostart_task() {
+    // 任务不存在说明用户没开自启动，不处理
+    let old_path = match get_autostart_task_command_path() {
+        Some(path) => path,
+        None => return,
+    };
+
+    let current_exe = match std::env::current_exe() {
+        Ok(exe) => exe,
+        Err(_) => return,
+    };
+    let current_path = current_exe.to_string_lossy().to_string();
+
+    if paths_equivalent(&unescape_xml_text(&old_path), &current_path) {
+        return;
+    }
+
+    match create_autostart_task(&current_path) {
+        Ok(()) => eprintln!(
+            "[自启动自愈] 检测到exe路径已变化，已重建计划任务: {}",
+            current_path
+        ),
+        Err(e) => eprintln!("[自启动自愈] 重建计划任务失败: {}", e),
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -1479,6 +1586,8 @@ pub fn run() {
         .manage(AppState)
         .setup(|app| {
             setup_tray(app.handle())?;
+            #[cfg(target_os = "windows")]
+            std::thread::spawn(self_heal_autostart_task);
             let args: Vec<String> = std::env::args().collect();
             let is_autostart = args.iter().any(|a| a == "--autostart");
             if !is_autostart {
