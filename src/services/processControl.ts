@@ -133,6 +133,14 @@ export const gameOptimizationActions: GameOptimizationAction[] = [
     errorMessage: '提高鸣潮优先级失败',
   },
   {
+    id: 'poe1',
+    label: '流放之路1优化',
+    command: 'raise_poe1_priority',
+    startMessage: '开始提高流放之路1优先级...',
+    successMessage: '流放之路1优先级修改完成:',
+    errorMessage: '提高流放之路1优先级失败',
+  },
+  {
     id: 'poe2',
     label: '流放之路2优化',
     command: 'raise_poe2_priority',

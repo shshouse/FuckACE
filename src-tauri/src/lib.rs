@@ -67,6 +67,7 @@ const MEMORY_CLEAN_PROTECTED_PROCESS_NAMES: &[&str] = &[
     "dnf.exe",
     "nrc-win64-shipping.exe",
     "client-win64-shipping.exe",
+    "pathofexile.exe",
     "pathofexilesteam.exe",
     "thedivision2.exe",
     "endfield.exe",
@@ -94,6 +95,7 @@ const ALL_MONITORED_EXE_NAMES: &[&str] = &[
     "DNF.exe",
     "NRC-Win64-Shipping.exe",
     "Client-Win64-Shipping.exe",
+    "PathOfExile.exe",
     "PathOfExileSteam.exe",
     "TheDivision2.exe",
     "Endfield.exe",
@@ -1220,6 +1222,16 @@ async fn raise_wutheringwaves_priority() -> Result<String, String> {
 }
 
 #[tauri::command]
+async fn raise_poe1_priority() -> Result<String, String> {
+    if !is_elevated() { return Err("需要管理员权限才能修改注册表".to_string()); }
+    let results: Vec<String> = ["PathOfExile.exe", "PathOfExileSteam.exe"]
+        .iter()
+        .map(|name| set_game_registry_priority(name, 3, 3).unwrap_or_else(|e| e))
+        .collect();
+    Ok(results.join("\n"))
+}
+
+#[tauri::command]
 async fn raise_poe2_priority() -> Result<String, String> {
     if !is_elevated() { return Err("需要管理员权限才能修改注册表".to_string()); }
     set_game_registry_priority("PathOfExileSteam.exe", 3, 3)
@@ -1624,6 +1636,7 @@ pub fn run() {
             raise_dnf_priority,
             raise_rocoworld_priority,
             raise_wutheringwaves_priority,
+            raise_poe1_priority,
             raise_poe2_priority,
             raise_division2_priority,
             raise_endfield_priority,

@@ -114,7 +114,7 @@ export function MemoryCleanCard({
           <Slider
             size="small"
             value={autoMemoryCleanThreshold}
-            min={80}
+            min={50}
             max={95}
             step={5}
             onChange={(_, value) => onThresholdChange(value as number)}
