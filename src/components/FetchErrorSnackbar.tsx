@@ -12,7 +12,7 @@ export function FetchErrorSnackbar({ open }: FetchErrorSnackbarProps) {
       anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
     >
       <Alert severity="warning" variant="filled" sx={{ width: '100%' }}>
-        无法获取更新，请检查网络/(ㄒoㄒ)/~~
+        无法获取更新，1分钟后自动重试/(ㄒoㄒ)/~~
       </Alert>
     </Snackbar>
   );

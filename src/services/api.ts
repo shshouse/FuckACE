@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 export interface Announcement {
     id: number;
@@ -28,6 +28,7 @@ interface InitialData {
 const API_URL = import.meta.env.VITE_API_URL || '';
 const API_KEY = import.meta.env.VITE_API_KEY || '';
 const isConfigured = Boolean(API_URL && API_KEY);
+const FETCH_RETRY_INTERVAL_MS = 60 * 1000;
 
 async function query<T>(table: string, params: Record<string, string> = {}): Promise<T | null> {
     if (!isConfigured) return null;
@@ -68,12 +69,28 @@ export const useInitialData = (currentVersion: string) => {
     });
     const [loading, setLoading] = useState(true);
     const [fetchError, setFetchError] = useState(false);
+    const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const fetchInitialDataRef = useRef<() => Promise<void>>(async () => {});
 
     const fetchInitialData = useCallback(async () => {
         if (!isConfigured) {
             setLoading(false);
             return;
         }
+
+        // 新的获取开始时清掉待执行的重试，避免手动刷新与定时重试叠加
+        if (retryTimerRef.current) {
+            clearTimeout(retryTimerRef.current);
+            retryTimerRef.current = null;
+        }
+
+        // 失败后每分钟重试一次，直到成功获取
+        const scheduleRetry = () => {
+            retryTimerRef.current = setTimeout(() => {
+                void fetchInitialDataRef.current();
+            }, FETCH_RETRY_INTERVAL_MS);
+        };
+
         try {
             setLoading(true);
             setFetchError(false);
@@ -91,29 +108,40 @@ export const useInitialData = (currentVersion: string) => {
                     'select': '*',
                 }),
             ]);
-            if (!announcements && !versions) {
+            // 任一查询失败都视为整体失败：announcements 失败会丢公告，versions 失败会漏掉更新检测
+            if (!announcements || !versions) {
                 setFetchError(true);
+                scheduleRetry();
                 return;
             }
-            const latestVersion = versions?.[0] || null;
+            const latestVersion = versions[0] || null;
             const hasUpdate = latestVersion
                 ? compareVersions(latestVersion.version, currentVersion) > 0
                 : false;
             setData({
-                announcements: announcements || [],
+                announcements,
                 latestVersion,
                 hasUpdate,
             });
         } catch (error) {
             console.error('Failed to fetch initial data:', error);
             setFetchError(true);
+            scheduleRetry();
         } finally {
             setLoading(false);
         }
     }, [currentVersion]);
 
+    fetchInitialDataRef.current = fetchInitialData;
+
     useEffect(() => {
         fetchInitialData();
+
+        return () => {
+            if (retryTimerRef.current) {
+                clearTimeout(retryTimerRef.current);
+            }
+        };
     }, [fetchInitialData]);
 
     return {
