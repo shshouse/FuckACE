@@ -31,6 +31,7 @@ import {
   resetRegistryPriorityCommand,
   restrictProcesses,
   setAutoStartState,
+  type IoSampleMap,
   type LoggedCommandDefinition,
 } from './services/processControl';
 import { savePerformanceReport } from './services/report';
@@ -87,6 +88,7 @@ function App() {
   const [hasAutoCleanedForGame, setHasAutoCleanedForGame] = useState(false);
   const [autoMemoryCleanThreshold, setAutoMemoryCleanThreshold] = useState<number | null>(null);
   const lastThresholdCleanRef = useRef(0);
+  const prevIoSamplesRef = useRef<IoSampleMap>(new Map());
 
   const gameProcesses = performance.map((process) => process.name);
   const { announcements, latestVersion, hasUpdate, fetchError } = useInitialData(APP_VERSION);
@@ -197,7 +199,7 @@ function App() {
 
       setPerformance(currentPerformance);
 
-      const point = buildPerformancePoint(currentPerformance);
+      const point = buildPerformancePoint(currentPerformance, prevIoSamplesRef.current);
 
       setPerfHistory((previousHistory) => [...previousHistory, point]);
     } catch (error) {
@@ -513,7 +515,7 @@ function App() {
   return (
     <ThemeProvider theme={currentTheme}>
       <CssBaseline />
-      <Container maxWidth="lg" sx={{ py: 1, minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+      <Container maxWidth="lg" sx={{ py: 1, height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <AppHeader
           appVersion={APP_VERSION}
           announcementCount={announcements.length}
@@ -530,7 +532,7 @@ function App() {
           onToggleTheme={toggleDarkMode}
         />
 
-        <Box display="flex" flexDirection="column" gap={1} sx={{ flex: 1, minHeight: 0 }}>
+        <Box display="flex" flexDirection="column" gap={1} sx={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
           <Box display="flex" gap={1}>
             <PerformancePanel
               history={displayedHistory}

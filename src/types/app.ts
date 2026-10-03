@@ -4,6 +4,10 @@ export interface ProcessStatus {
   sguard64_restricted: boolean;
   sguardsvc64_found: boolean;
   sguardsvc64_restricted: boolean;
+  ace_tray_found: boolean;
+  ace_tray_restricted: boolean;
+  ace_service_found: boolean;
+  ace_service_restricted: boolean;
   message: string;
 }
 
@@ -28,8 +32,8 @@ export interface ProcessPerformance {
   name:string;
   cpu_usage:number;
   memory_mb:number;
-  disk_read_bytes: number;
-  disk_write_bytes: number;
+  disk_total_read_bytes: number;
+  disk_total_write_bytes: number;
 }
 export interface PerfDataPoint{
   time: string;
@@ -39,6 +43,12 @@ export interface PerfDataPoint{
   sguardsvc_mem: number | null;
   sguard_io:number | null;
   sguardsvc_io: number | null;
+  acetray_cpu: number | null;
+  acetray_mem: number | null;
+  acetray_io: number | null;
+  aceservice_cpu: number | null;
+  aceservice_mem: number | null;
+  aceservice_io: number | null;
 }
 export interface RestrictionSettings {
   enableCpuAffinity:boolean;

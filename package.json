@@ -1,7 +1,7 @@
 {
   "name": "fuckace",
   "private": true,
-  "version": "1.1.2",
+  "version": "1.2.0",
   "type": "module",
   "scripts": {
     "sync-version": "node scripts/sync-version.cjs",

@@ -13,6 +13,10 @@ struct RestrictResult {
     sguard64_restricted: bool,
     sguardsvc64_found: bool,
     sguardsvc64_restricted: bool,
+    ace_tray_found: bool,
+    ace_tray_restricted: bool,
+    ace_service_found: bool,
+    ace_service_restricted: bool,
     message: String,
 }
 
@@ -34,8 +38,8 @@ struct ProcessPerformance {
     name: String,
     cpu_usage: f32,
     memory_mb: f64,
-    disk_read_bytes: u64,
-    disk_write_bytes: u64,
+    disk_total_read_bytes: u64,
+    disk_total_write_bytes: u64,
 }
 
 struct AppState;
@@ -57,6 +61,8 @@ const MEMORY_CLEAN_PROTECTED_PROCESS_NAMES: &[&str] = &[
     "fuckace.exe",
     "sguard64.exe",
     "sguardsvc64.exe",
+    "ace-tray.exe",
+    "ace-service64.exe",
     "deltaforceclient-win64-shipping.exe",
     "valorant-win64-shipping.exe",
     "league of legends.exe",
@@ -86,6 +92,8 @@ const ALL_MONITORED_EXE_NAMES: &[&str] = &[
     "DeltaForceClient-Win64-Shipping.exe",
     "SGuard64.exe",
     "SGuardSvc64.exe",
+    "ACE-Tray.exe",
+    "ACE-Service64.exe",
     "VALORANT-Win64-Shipping.exe",
     "League of Legends.exe",
     "ABInfinite-Win64-Shipping.exe",
@@ -482,10 +490,15 @@ fn restrict_target_processes(
 
     let (target_cores, core_mask, is_e_core, is_custom) = resolve_affinity(affinity_cores);
 
-    let mut sguard64_found = false;
-    let mut sguard64_restricted = false;
-    let mut sguardsvc64_found = false;
-    let mut sguardsvc64_restricted = false;
+    // (匹配用的进程名小写, 展示名, 结果字段索引)
+    let targets = [
+        ("sguard64.exe", "SGuard64.exe", 0usize),
+        ("sguardsvc64.exe", "SGuardSvc64.exe", 1usize),
+        ("ace-tray.exe", "ACE-Tray.exe", 2usize),
+        ("ace-service64.exe", "ACE-Service64.exe", 3usize),
+    ];
+    let mut found = [false; 4];
+    let mut restricted = [false; 4];
 
     let mut message = String::new();
 
@@ -541,53 +554,41 @@ fn restrict_target_processes(
     for (pid, process) in system.processes() {
         let process_name = process.name().to_string_lossy().to_lowercase();
 
-        if process_name.contains("sguard64.exe") {
-            sguard64_found = true;
-            let (restricted, details) = restrict_single_process(
-                *pid, enable_cpu_affinity, enable_process_priority,
-                enable_efficiency_mode, enable_io_priority, enable_memory_priority,
-                core_mask, is_e_core,
-            );
-            let details_str = details.join(", ");
-            if restricted {
-                sguard64_restricted = true;
-                message.push_str(&format!("SGuard64.exe (PID: {}) [{}]\n", pid, details_str));
-            } else {
-                message.push_str(&format!("SGuard64.exe (PID: {}) 所有限制均失败 [{}]\n", pid, details_str));
-            }
-        }
-
-        if process_name.contains("sguardsvc64.exe") {
-            sguardsvc64_found = true;
-            let (restricted, details) = restrict_single_process(
-                *pid, enable_cpu_affinity, enable_process_priority,
-                enable_efficiency_mode, enable_io_priority, enable_memory_priority,
-                core_mask, is_e_core,
-            );
-            let details_str = details.join(", ");
-            if restricted {
-                sguardsvc64_restricted = true;
-                message.push_str(&format!("SGuardSvc64.exe (PID: {}) [{}]\n", pid, details_str));
-            } else {
-                message.push_str(&format!("SGuardSvc64.exe (PID: {}) 所有限制均失败 [{}]\n", pid, details_str));
+        for (match_name, display_name, idx) in &targets {
+            if process_name.contains(match_name) {
+                found[*idx] = true;
+                let (ok, details) = restrict_single_process(
+                    *pid, enable_cpu_affinity, enable_process_priority,
+                    enable_efficiency_mode, enable_io_priority, enable_memory_priority,
+                    core_mask, is_e_core,
+                );
+                let details_str = details.join(", ");
+                if ok {
+                    restricted[*idx] = true;
+                    message.push_str(&format!("{} (PID: {}) [{}]\n", display_name, pid, details_str));
+                } else {
+                    message.push_str(&format!("{} (PID: {}) 所有限制均失败 [{}]\n", display_name, pid, details_str));
+                }
             }
         }
     }
 
-    if !sguard64_found {
-        message.push_str("未找到SGuard64.exe进程\n");
-    }
-
-    if !sguardsvc64_found {
-        message.push_str("未找到SGuardSvc64.exe进程\n");
+    for (_, display_name, idx) in &targets {
+        if !found[*idx] {
+            message.push_str(&format!("未找到{}进程\n", display_name));
+        }
     }
 
     RestrictResult {
         target_cores,
-        sguard64_found,
-        sguard64_restricted,
-        sguardsvc64_found,
-        sguardsvc64_restricted,
+        sguard64_found: found[0],
+        sguard64_restricted: restricted[0],
+        sguardsvc64_found: found[1],
+        sguardsvc64_restricted: restricted[1],
+        ace_tray_found: found[2],
+        ace_tray_restricted: restricted[2],
+        ace_service_found: found[3],
+        ace_service_restricted: restricted[3],
         message,
     }
 }
@@ -996,7 +997,12 @@ async fn get_process_performance() -> Vec<ProcessPerformance> {
     std::thread::sleep(std::time::Duration::from_millis(200));
     system.refresh_processes(ProcessesToUpdate::All, true);
 
-    let target_names = vec!["sguard64.exe", "sguardsvc64.exe"];
+    let target_names = vec![
+        "sguard64.exe",
+        "sguardsvc64.exe",
+        "ace-tray.exe",
+        "ace-service64.exe",
+    ];
     let mut performances = Vec::new();
 
     for (pid, process) in system.processes() {
@@ -1010,8 +1016,10 @@ async fn get_process_performance() -> Vec<ProcessPerformance> {
                     name: process.name().to_string_lossy().to_string(),
                     cpu_usage: process.cpu_usage(),
                     memory_mb: process.memory() as f64 / 1024.0 / 1024.0,
-                    disk_read_bytes: disk.read_bytes,
-                    disk_write_bytes: disk.written_bytes,
+                    // 返回累计字节数,由前端跨采样做差分计算速率;
+                    // 窗口增量(read_bytes/written_bytes)只覆盖此处 200ms 刷新间隔,不能直接当速率用
+                    disk_total_read_bytes: disk.total_read_bytes,
+                    disk_total_write_bytes: disk.total_written_bytes,
                 });
                 break;
             }
@@ -1154,7 +1162,7 @@ async fn lower_ace_priority() -> Result<String, String> {
     if !is_elevated() {
         return Err("需要管理员权限才能修改注册表".to_string());
     }
-    let results: Vec<String> = ["SGuard64.exe", "SGuardSvc64.exe"]
+    let results: Vec<String> = ["SGuard64.exe", "SGuardSvc64.exe", "ACE-Tray.exe", "ACE-Service64.exe"]
         .iter()
         .map(|name| set_game_registry_priority(name, 1, 1).unwrap_or_else(|e| e))
         .collect();

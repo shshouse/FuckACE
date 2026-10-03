@@ -14,7 +14,7 @@ export function LogPanel({ logs, containerRef }: LogPanelProps) {
         ref={containerRef}
         sx={{
           flex: 1,
-          minHeight: 80,
+          minHeight: 64,
           overflowY: 'auto',
           border: '1px solid',
           borderColor: 'divider',

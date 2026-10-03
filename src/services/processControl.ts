@@ -28,7 +28,7 @@ type RestrictionExecutionOptions = Pick<
   affinityCores?: number[];
 };
 
-const aceProcessNames = ['sguard64.exe', 'sguardsvc64.exe'];
+const aceProcessNames = ['sguard64.exe', 'sguardsvc64.exe', 'ace-tray.exe', 'ace-service64.exe'];
 
 export const lowerAcePriorityCommand: LoggedCommandDefinition = {
   command: 'lower_ace_priority',
@@ -215,9 +215,52 @@ export function hasAceProcess(performance: ProcessPerformance[]) {
   });
 }
 
-export function buildPerformancePoint(performance: ProcessPerformance[]): PerfDataPoint {
+export interface IoSample {
+  totalBytes: number;
+  timeMs: number;
+}
+
+// 按进程 PID 记录上一次采样的磁盘累计字节数,用于跨采样差分计算真实速率
+export type IoSampleMap = Map<number, IoSample>;
+
+function computeIoRateKbPerSec(
+  process: ProcessPerformance | undefined,
+  prevIoSamples: IoSampleMap,
+  nowMs: number,
+): number | null {
+  if (!process) return null;
+
+  const totalBytes = process.disk_total_read_bytes + process.disk_total_write_bytes;
+  const previous = prevIoSamples.get(process.pid);
+  prevIoSamples.set(process.pid, { totalBytes, timeMs: nowMs });
+
+  if (!previous) return null;
+
+  const elapsedSeconds = (nowMs - previous.timeMs) / 1000;
+  const deltaBytes = totalBytes - previous.totalBytes;
+  // 进程重启或 PID 复用会使计数器复位(差值为负),该采样点无法计算速率
+  if (elapsedSeconds <= 0 || deltaBytes < 0) return null;
+
+  return parseFloat((deltaBytes / 1024 / elapsedSeconds).toFixed(1));
+}
+
+export function buildPerformancePoint(
+  performance: ProcessPerformance[],
+  prevIoSamples: IoSampleMap,
+): PerfDataPoint {
   const sguardProcess = performance.find((process) => process.name.toLowerCase().includes('sguard64.exe'));
   const sguardServiceProcess = performance.find((process) => process.name.toLowerCase().includes('sguardsvc64.exe'));
+  const aceTrayProcess = performance.find((process) => process.name.toLowerCase().includes('ace-tray.exe'));
+  const aceServiceProcess = performance.find((process) => process.name.toLowerCase().includes('ace-service64.exe'));
+  const nowMs = Date.now();
+
+  // 进程消失后清掉旧采样,避免跨越无数据的时间段算出一个失真平均速率
+  const activePids = new Set(performance.map((process) => process.pid));
+  for (const pid of [...prevIoSamples.keys()]) {
+    if (!activePids.has(pid)) {
+      prevIoSamples.delete(pid);
+    }
+  }
 
   return {
     time: new Date().toLocaleTimeString('zh-CN', {
@@ -229,11 +272,13 @@ export function buildPerformancePoint(performance: ProcessPerformance[]): PerfDa
     sguard_mem: sguardProcess ? parseFloat(sguardProcess.memory_mb.toFixed(1)) : null,
     sguardsvc_cpu: sguardServiceProcess ? parseFloat(sguardServiceProcess.cpu_usage.toFixed(1)) : null,
     sguardsvc_mem: sguardServiceProcess ? parseFloat(sguardServiceProcess.memory_mb.toFixed(1)) : null,
-    sguard_io: sguardProcess
-      ? parseFloat(((sguardProcess.disk_read_bytes + sguardProcess.disk_write_bytes) / 1024 / 5).toFixed(1))
-      : null,
-    sguardsvc_io: sguardServiceProcess
-      ? parseFloat(((sguardServiceProcess.disk_read_bytes + sguardServiceProcess.disk_write_bytes) / 1024 / 5).toFixed(1))
-      : null,
+    sguard_io: computeIoRateKbPerSec(sguardProcess, prevIoSamples, nowMs),
+    sguardsvc_io: computeIoRateKbPerSec(sguardServiceProcess, prevIoSamples, nowMs),
+    acetray_cpu: aceTrayProcess ? parseFloat(aceTrayProcess.cpu_usage.toFixed(1)) : null,
+    acetray_mem: aceTrayProcess ? parseFloat(aceTrayProcess.memory_mb.toFixed(1)) : null,
+    acetray_io: computeIoRateKbPerSec(aceTrayProcess, prevIoSamples, nowMs),
+    aceservice_cpu: aceServiceProcess ? parseFloat(aceServiceProcess.cpu_usage.toFixed(1)) : null,
+    aceservice_mem: aceServiceProcess ? parseFloat(aceServiceProcess.memory_mb.toFixed(1)) : null,
+    aceservice_io: computeIoRateKbPerSec(aceServiceProcess, prevIoSamples, nowMs),
   };
 }

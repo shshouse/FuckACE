@@ -198,9 +198,12 @@ function formatRatio(value: number) {
 }
 
 function calculatePerformanceScore(data: PerfDataPoint[]): PerformanceScoreSummary {
-  const totalCpuValues = data.map((point) => combineMetricValues(point.sguard_cpu, point.sguardsvc_cpu));
-  const totalMemoryValues = data.map((point) => combineMetricValues(point.sguard_mem, point.sguardsvc_mem));
-  const totalIoValues = data.map((point) => combineMetricValues(point.sguard_io, point.sguardsvc_io));
+  const totalCpuValues = data.map((point) =>
+    combineMetricValues(point.sguard_cpu, point.sguardsvc_cpu, point.acetray_cpu, point.aceservice_cpu));
+  const totalMemoryValues = data.map((point) =>
+    combineMetricValues(point.sguard_mem, point.sguardsvc_mem, point.acetray_mem, point.aceservice_mem));
+  const totalIoValues = data.map((point) =>
+    combineMetricValues(point.sguard_io, point.sguardsvc_io, point.acetray_io, point.aceservice_io));
 
   const cpuStats = summarizeMetric(totalCpuValues);
   const memoryStats = summarizeMetric(totalMemoryValues);
@@ -540,16 +543,22 @@ export async function savePerformanceReport({
   drawChart(firstChartY, 'CPU 占用 (%)', '%', [
     { values: data.map((point) => point.sguard_cpu), color: '#f44336', label: 'SGuard64' },
     { values: data.map((point) => point.sguardsvc_cpu), color: '#ff9800', label: 'SGuardSvc64' },
+    { values: data.map((point) => point.acetray_cpu), color: '#42a5f5', label: 'ACE-Tray' },
+    { values: data.map((point) => point.aceservice_cpu), color: '#ab47bc', label: 'ACE-Service64' },
   ]);
 
   drawChart(firstChartY + chartHeight + chartGap, '内存占用 (MB)', ' MB', [
     { values: data.map((point) => point.sguard_mem), color: '#f44336', label: 'SGuard64' },
     { values: data.map((point) => point.sguardsvc_mem), color: '#ff9800', label: 'SGuardSvc64' },
+    { values: data.map((point) => point.acetray_mem), color: '#42a5f5', label: 'ACE-Tray' },
+    { values: data.map((point) => point.aceservice_mem), color: '#ab47bc', label: 'ACE-Service64' },
   ]);
 
   drawChart(firstChartY + 2 * (chartHeight + chartGap), 'I/O 读写 (KB/s)', ' KB/s', [
     { values: data.map((point) => point.sguard_io), color: '#f44336', label: 'SGuard64' },
     { values: data.map((point) => point.sguardsvc_io), color: '#ff9800', label: 'SGuardSvc64' },
+    { values: data.map((point) => point.acetray_io), color: '#42a5f5', label: 'ACE-Tray' },
+    { values: data.map((point) => point.aceservice_io), color: '#ab47bc', label: 'ACE-Service64' },
   ]);
 
   const base64Data = canvas.toDataURL('image/png').split(',')[1];

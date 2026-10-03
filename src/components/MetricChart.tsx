@@ -1,6 +1,5 @@
 import {
   CartesianGrid,
-  Legend,
   Line,
   LineChart,
   ResponsiveContainer,
@@ -25,7 +24,6 @@ interface MetricChartProps {
   unit: string;
   tooltipFormatter: (value: unknown) => string;
   lines: readonly MetricLine[];
-  showLegend?: boolean;
 }
 
 export function MetricChart({
@@ -34,14 +32,13 @@ export function MetricChart({
   unit,
   tooltipFormatter,
   lines,
-  showLegend = false,
 }: MetricChartProps) {
   return (
     <>
       <Typography variant="caption" color="text.secondary" sx={{ pl: 0.5, lineHeight: 1.2 }}>
         {title}
       </Typography>
-      <ResponsiveContainer width="100%" height={65}>
+      <ResponsiveContainer width="100%" height={60}>
         <LineChart data={data} margin={{ top: 2, right: 8, left: -20, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
           <XAxis dataKey="time" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
@@ -50,7 +47,6 @@ export function MetricChart({
             contentStyle={{ backgroundColor: '#1e1e1e', border: '1px solid #444', fontSize: 11 }}
             formatter={(value: unknown) => [tooltipFormatter(value)]}
           />
-          {showLegend && <Legend wrapperStyle={{ fontSize: 10, lineHeight: '14px' }} />}
           {lines.map((line) => (
             <Line
               key={line.dataKey}

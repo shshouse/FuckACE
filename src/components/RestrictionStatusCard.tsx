@@ -9,6 +9,35 @@ interface RestrictionStatusCardProps {
   loading: boolean;
 }
 
+interface MonitoredProcessItem {
+  label: string;
+  getFound: (status: ProcessStatus | null) => boolean;
+  getRestricted: (status: ProcessStatus | null) => boolean;
+}
+
+const monitoredProcesses: MonitoredProcessItem[] = [
+  {
+    label: 'SGuard64',
+    getFound: (status) => status?.sguard64_found || false,
+    getRestricted: (status) => status?.sguard64_restricted || false,
+  },
+  {
+    label: 'SGuardSvc64',
+    getFound: (status) => status?.sguardsvc64_found || false,
+    getRestricted: (status) => status?.sguardsvc64_restricted || false,
+  },
+  {
+    label: 'ACE-Tray',
+    getFound: (status) => status?.ace_tray_found || false,
+    getRestricted: (status) => status?.ace_tray_restricted || false,
+  },
+  {
+    label: 'ACE-Service64',
+    getFound: (status) => status?.ace_service_found || false,
+    getRestricted: (status) => status?.ace_service_restricted || false,
+  },
+];
+
 function formatCores(cores: number[]): string {
   if (cores.length <= 4) {
     return cores.join(',');
@@ -67,31 +96,23 @@ export function RestrictionStatusCard({
         </Box>
         <Divider sx={{ my: 0.3 }} />
         <List dense sx={{ py: 0 }}>
-          <ListItem
-            secondaryAction={
-              <Chip
-                label={getProcessStatusText(processStatus?.sguard64_found || false, processStatus?.sguard64_restricted || false)}
-                color={getProcessStatusColor(processStatus?.sguard64_found || false, processStatus?.sguard64_restricted || false)}
-                size="small"
-              />
-            }
-            sx={{ py: 0.3 }}
-          >
-            <ListItemText primary="SGuard64.exe" primaryTypographyProps={{ variant: 'body2', fontSize: '0.85rem' }} />
-          </ListItem>
-          <Divider />
-          <ListItem
-            secondaryAction={
-              <Chip
-                label={getProcessStatusText(processStatus?.sguardsvc64_found || false, processStatus?.sguardsvc64_restricted || false)}
-                color={getProcessStatusColor(processStatus?.sguardsvc64_found || false, processStatus?.sguardsvc64_restricted || false)}
-                size="small"
-              />
-            }
-            sx={{ py: 0.3 }}
-          >
-            <ListItemText primary="SGuardSvc64.exe" primaryTypographyProps={{ variant: 'body2', fontSize: '0.85rem' }} />
-          </ListItem>
+          {monitoredProcesses.map((item, index) => (
+            <Box key={item.label}>
+              {index > 0 && <Divider />}
+              <ListItem
+                secondaryAction={
+                  <Chip
+                    label={getProcessStatusText(item.getFound(processStatus), item.getRestricted(processStatus))}
+                    color={getProcessStatusColor(item.getFound(processStatus), item.getRestricted(processStatus))}
+                    size="small"
+                  />
+                }
+                sx={{ py: 0.3 }}
+              >
+                <ListItemText primary={item.label} primaryTypographyProps={{ variant: 'body2', fontSize: '0.85rem' }} />
+              </ListItem>
+            </Box>
+          ))}
         </List>
         {loading && <LinearProgress sx={{ mt: 0.5 }} />}
       </Box>

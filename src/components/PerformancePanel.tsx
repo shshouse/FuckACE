@@ -15,8 +15,14 @@ interface ChartSection {
   unit: string;
   tooltipFormatter: (value: unknown) => string;
   lines: readonly MetricLine[];
-  showLegend?: boolean;
 }
+
+const chartLegendItems: ReadonlyArray<{ name: string; color: string }> = [
+  { name: 'SGuard64', color: '#f44336' },
+  { name: 'SGuardSvc64', color: '#ff9800' },
+  { name: 'ACE-Tray', color: '#42a5f5' },
+  { name: 'ACE-Service64', color: '#ab47bc' },
+];
 
 const chartSections: ChartSection[] = [
   {
@@ -26,6 +32,8 @@ const chartSections: ChartSection[] = [
     lines: [
       { dataKey: 'sguard_cpu', name: 'SGuard64', stroke: '#f44336' },
       { dataKey: 'sguardsvc_cpu', name: 'SGuardSvc64', stroke: '#ff9800' },
+      { dataKey: 'acetray_cpu', name: 'ACE-Tray', stroke: '#42a5f5' },
+      { dataKey: 'aceservice_cpu', name: 'ACE-Service64', stroke: '#ab47bc' },
     ],
   },
   {
@@ -35,6 +43,8 @@ const chartSections: ChartSection[] = [
     lines: [
       { dataKey: 'sguard_mem', name: 'SGuard64', stroke: '#f44336' },
       { dataKey: 'sguardsvc_mem', name: 'SGuardSvc64', stroke: '#ff9800' },
+      { dataKey: 'acetray_mem', name: 'ACE-Tray', stroke: '#42a5f5' },
+      { dataKey: 'aceservice_mem', name: 'ACE-Service64', stroke: '#ab47bc' },
     ],
   },
   {
@@ -44,8 +54,9 @@ const chartSections: ChartSection[] = [
     lines: [
       { dataKey: 'sguard_io', name: 'SGuard64', stroke: '#f44336' },
       { dataKey: 'sguardsvc_io', name: 'SGuardSvc64', stroke: '#ff9800' },
+      { dataKey: 'acetray_io', name: 'ACE-Tray', stroke: '#42a5f5' },
+      { dataKey: 'aceservice_io', name: 'ACE-Service64', stroke: '#ab47bc' },
     ],
-    showLegend: true,
   },
 ];
 
@@ -68,7 +79,7 @@ export function PerformancePanel({
           disabled={exportingReport || history.length === 0}
           sx={{ fontSize: '0.7rem', py: 0.2 }}
         >
-          {exportingReport ? '生成中...' : '导出报告（新）'}
+          {exportingReport ? '生成中...' : '导出报告到桌面'}
         </Button>
       </Box>
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.3 }}>
@@ -80,8 +91,26 @@ export function PerformancePanel({
             unit={section.unit}
             tooltipFormatter={section.tooltipFormatter}
             lines={section.lines}
-            showLegend={section.showLegend}
           />
+        ))}
+      </Box>
+      <Box
+        sx={{
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: 1.2,
+          pt: 0.3,
+        }}
+      >
+        {chartLegendItems.map((item) => (
+          <Box key={item.name} sx={{ display: 'flex', alignItems: 'center', gap: 0.4 }}>
+            <Box sx={{ width: 14, height: 3, borderRadius: 1, bgcolor: item.color }} />
+            <Typography variant="caption" sx={{ lineHeight: 1 }}>
+              {item.name}
+            </Typography>
+          </Box>
         ))}
       </Box>
     </Paper>
