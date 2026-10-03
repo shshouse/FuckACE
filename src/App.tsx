@@ -92,6 +92,27 @@ function App() {
 
   const gameProcesses = performance.map((process) => process.name);
   const { announcements, latestVersion, hasUpdate, fetchError } = useInitialData(APP_VERSION);
+
+  const latestAnnouncementStamp = announcements.reduce<string>(
+    (latest, announcement) => (announcement.created_at > latest ? announcement.created_at : latest),
+    '',
+  );
+  const currentAnnouncementsKey = latestAnnouncementStamp
+    ? `${APP_VERSION}|${latestAnnouncementStamp}`
+    : '';
+  const [announcementsSeenKey, setAnnouncementsSeenKey] = useState(
+    () => storage.getChoices().announcementsSeenKey ?? '',
+  );
+  const hasUnseenAnnouncements =
+    currentAnnouncementsKey !== '' && announcementsSeenKey !== currentAnnouncementsKey;
+
+  const openAnnouncements = useCallback(() => {
+    setShowAnnouncements(true);
+    if (currentAnnouncementsKey) {
+      setAnnouncementsSeenKey(currentAnnouncementsKey);
+      storage.saveChoices({ announcementsSeenKey: currentAnnouncementsKey });
+    }
+  }, [currentAnnouncementsKey]);
   const restrictionSettingSetters: Record<RestrictionSettingKey, (checked: boolean) => void> = {
     enableCpuAffinity: setEnableCpuAffinity,
     enableProcessPriority: setEnableProcessPriority,
@@ -518,10 +539,10 @@ function App() {
       <Container maxWidth="lg" sx={{ py: 1, height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <AppHeader
           appVersion={APP_VERSION}
-          announcementCount={announcements.length}
+          announcementCount={hasUnseenAnnouncements ? announcements.length : 0}
           hasUpdate={hasUpdate}
           darkMode={darkMode}
-          onOpenAnnouncements={() => setShowAnnouncements(true)}
+          onOpenAnnouncements={openAnnouncements}
           onOpenUpdates={() => setShowUpdateDialog(true)}
           onOpenBilibiliHome={() => {
             void openExternalLink('https://space.bilibili.com/309820452');
