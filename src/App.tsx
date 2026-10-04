@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Box, Container, CssBaseline, ThemeProvider } from '@mui/material';
-import { ActiveActionsCard } from './components/ActiveActionsCard';
 import { AppHeader } from './components/AppHeader';
 import { AffinityCoreDialog } from './components/dialogs/AffinityCoreDialog';
 import { FetchErrorSnackbar } from './components/FetchErrorSnackbar';
@@ -10,7 +9,7 @@ import { LogPanel } from './components/LogPanel';
 import { MemoryCleanCard } from './components/MemoryCleanCard';
 import { PassiveActionsCard } from './components/PassiveActionsCard';
 import { PerformancePanel } from './components/PerformancePanel';
-import { RestrictionStatusCard } from './components/RestrictionStatusCard';
+import { RestrictionControlCard } from './components/RestrictionControlCard';
 import { SystemInfoCard } from './components/SystemInfoCard';
 import { AnnouncementsDialog } from './components/dialogs/AnnouncementsDialog';
 import { UpdateDialog } from './components/dialogs/UpdateDialog';
@@ -90,7 +89,7 @@ function App() {
   const lastThresholdCleanRef = useRef(0);
   const prevIoSamplesRef = useRef<IoSampleMap>(new Map());
 
-  const gameProcesses = performance.map((process) => process.name);
+  const gameProcesses = performance.map((process) => process.name.replace(/\.exe$/i, ''));
   const { announcements, latestVersion, hasUpdate, fetchError } = useInitialData(APP_VERSION);
 
   const latestAnnouncementStamp = announcements.reduce<string>(
@@ -585,22 +584,19 @@ function App() {
               onCheckRegistry={checkRegistryPriority}
               onResetRegistry={resetRegistryPriority}
             />
-            <ActiveActionsCard
+            <RestrictionControlCard
               settings={restrictionSettings}
               autoStartEnabled={autoStartEnabled}
               loading={loading}
               isMonitoring={isMonitoring}
               affinityCustomized={affinityCores.length > 0}
+              targetCores={targetCores}
+              gameProcesses={gameProcesses}
+              processStatus={processStatus}
               onSettingChange={handleSettingChange}
               onToggleAutoStartup={toggleAutoStartup}
               onOpenAffinitySettings={() => setShowAffinityDialog(true)}
               onExecute={executeOnce}
-            />
-            <RestrictionStatusCard
-              targetCores={targetCores}
-              gameProcesses={gameProcesses}
-              processStatus={processStatus}
-              loading={loading}
             />
           </Box>
 
