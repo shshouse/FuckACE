@@ -28,7 +28,6 @@ interface SettingItem {
 
 interface MonitoredProcessItem {
   label: string;
-  getFound: (status: ProcessStatus | null) => boolean;
   getRestricted: (status: ProcessStatus | null) => boolean;
 }
 
@@ -58,22 +57,18 @@ const settingItems: SettingItem[] = [
 const monitoredProcesses: MonitoredProcessItem[] = [
   {
     label: 'SGuard64',
-    getFound: (status) => status?.sguard64_found || false,
     getRestricted: (status) => status?.sguard64_restricted || false,
   },
   {
     label: 'SGuardSvc64',
-    getFound: (status) => status?.sguardsvc64_found || false,
     getRestricted: (status) => status?.sguardsvc64_restricted || false,
   },
   {
     label: 'ACE-Tray',
-    getFound: (status) => status?.ace_tray_found || false,
     getRestricted: (status) => status?.ace_tray_restricted || false,
   },
   {
     label: 'ACE-Service64',
-    getFound: (status) => status?.ace_service_found || false,
     getRestricted: (status) => status?.ace_service_restricted || false,
   },
 ];
@@ -98,8 +93,16 @@ function resolveProcessStatus(found: boolean, restricted: boolean) {
   return { color: 'success.main', label: '运行中' };
 }
 
-function StatusTile({ item, processStatus }: { item: MonitoredProcessItem; processStatus: ProcessStatus | null }) {
-  const status = resolveProcessStatus(item.getFound(processStatus), item.getRestricted(processStatus));
+function StatusTile({
+  item,
+  found,
+  processStatus,
+}: {
+  item: MonitoredProcessItem;
+  found: boolean;
+  processStatus: ProcessStatus | null;
+}) {
+  const status = resolveProcessStatus(found, item.getRestricted(processStatus));
 
   return (
     <Box
@@ -169,7 +172,7 @@ export function RestrictionControlCard({
       elevation={2}
       sx={{ p: 1.5, flex: 1.7, minWidth: 0, maxWidth: '100%', display: 'flex', flexDirection: 'column' }}
     >
-      <Typography variant="subtitle1" gutterBottom sx={{ mb: 0.5, fontWeight: 600 }}>
+      <Typography variant="subtitle1" gutterBottom sx={{ mb: 0.5, fontWeight: 600, textAlign: 'center' }}>
         主动限制(开游戏后使用)
       </Typography>
 
@@ -282,10 +285,15 @@ export function RestrictionControlCard({
             display="grid"
             gridTemplateColumns="1fr 1fr"
             gap={0.6}
-            sx={{ flex: 1, minHeight: 0, alignContent: 'start' }}
+            sx={{ flex: 1, minHeight: 0 }}
           >
             {monitoredProcesses.map((item) => (
-              <StatusTile key={item.label} item={item} processStatus={processStatus} />
+              <StatusTile
+                key={item.label}
+                item={item}
+                found={gameProcesses.includes(item.label)}
+                processStatus={processStatus}
+              />
             ))}
           </Box>
 

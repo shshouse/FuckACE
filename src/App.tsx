@@ -88,6 +88,7 @@ function App() {
   const [autoMemoryCleanThreshold, setAutoMemoryCleanThreshold] = useState<number | null>(null);
   const lastThresholdCleanRef = useRef(0);
   const prevIoSamplesRef = useRef<IoSampleMap>(new Map());
+  const prevTargetPidsRef = useRef<Set<number>>(new Set());
 
   const gameProcesses = performance.map((process) => process.name.replace(/\.exe$/i, ''));
   const { announcements, latestVersion, hasUpdate, fetchError } = useInitialData(APP_VERSION);
@@ -420,13 +421,17 @@ function App() {
   ]);
 
   useEffect(() => {
-    if (!autoRestrict || hasAutoRestricted || !systemInfo?.is_admin) {
+    if (!autoRestrict || !systemInfo?.is_admin) {
       return;
     }
 
-    const aceFound = hasAceProcess(performance);
+    // 以进程 PID 增量为触发条件：常驻的 ACE-Tray 只在首次触发一次；
+    // 之后游戏拉起的 ACE-Service64/SGuard 等新进程出现时，再次自动限制
+    const currentPids = new Set(performance.map((process) => process.pid));
+    const hasNewProcess = [...currentPids].some((pid) => !prevTargetPidsRef.current.has(pid));
+    prevTargetPidsRef.current = currentPids;
 
-    if (aceFound) {
+    if (hasNewProcess && currentPids.size > 0) {
       setHasAutoRestricted(true);
       addLog('检测到ACE进程，自动执行主动限制...');
       void executeProcessRestriction();
@@ -435,7 +440,6 @@ function App() {
     addLog,
     autoRestrict,
     executeProcessRestriction,
-    hasAutoRestricted,
     performance,
     systemInfo,
   ]);
