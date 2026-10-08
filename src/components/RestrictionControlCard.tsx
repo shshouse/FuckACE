@@ -172,7 +172,7 @@ export function RestrictionControlCard({
       elevation={2}
       sx={{ p: 1.5, flex: 1.7, minWidth: 0, maxWidth: '100%', display: 'flex', flexDirection: 'column' }}
     >
-      <Typography variant="subtitle1" gutterBottom sx={{ mb: 0.5, fontWeight: 600, textAlign: 'center' }}>
+      <Typography variant="subtitle1" gutterBottom sx={{ mb: 0.5, fontWeight: 600 }}>
         主动限制(开游戏后使用)
       </Typography>
 

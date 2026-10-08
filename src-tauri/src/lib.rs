@@ -291,20 +291,39 @@ fn set_process_efficiency_mode(pid: Pid) -> (bool, Option<String>) {
             return (false, Some("进程句柄无效".to_string()));
         }
 
+        // PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION(0x4) 仅 Windows 11 支持，
+        // Win10 上包含它会让整个调用失败(ERROR_INVALID_PARAMETER)；
+        // 先全量设置，失败后降级为仅 EXECUTION_SPEED(0x1)
+        let full_mask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED
+            | PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION;
+
         let mut throttling_state = PROCESS_POWER_THROTTLING_STATE {
             Version: 1,
-            ControlMask: PROCESS_POWER_THROTTLING_EXECUTION_SPEED
-                | PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION,
-            StateMask: PROCESS_POWER_THROTTLING_EXECUTION_SPEED
-                | PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION,
+            ControlMask: full_mask,
+            StateMask: full_mask,
         };
 
-        let result = SetProcessInformation(
+        let mut result = SetProcessInformation(
             process_handle,
             ProcessPowerThrottling,
             &mut throttling_state as *mut _ as *mut _,
             std::mem::size_of::<PROCESS_POWER_THROTTLING_STATE>() as u32,
         );
+
+        if result.is_err() {
+            let speed_only = PROCESS_POWER_THROTTLING_EXECUTION_SPEED;
+            let mut fallback_state = PROCESS_POWER_THROTTLING_STATE {
+                Version: 1,
+                ControlMask: speed_only,
+                StateMask: speed_only,
+            };
+            result = SetProcessInformation(
+                process_handle,
+                ProcessPowerThrottling,
+                &mut fallback_state as *mut _ as *mut _,
+                std::mem::size_of::<PROCESS_POWER_THROTTLING_STATE>() as u32,
+            );
+        }
 
         let _ = CloseHandle(process_handle);
 
@@ -317,12 +336,26 @@ fn set_process_efficiency_mode(pid: Pid) -> (bool, Option<String>) {
     }
 }
 
+// 内核 PROCESSINFOCLASS::ProcessIoPriority(33)。SetProcessInformation 的 Win32
+// 枚举没有 I/O 优先级这一项，必须走 ntdll!NtSetInformationProcess
+const PROCESS_IO_PRIORITY_INFO_CLASS: u32 = 33;
+const PROCESS_IO_PRIORITY_VERY_LOW: u32 = 0;
+
+#[link(name = "ntdll")]
+extern "system" {
+    fn NtSetInformationProcess(
+        process_handle: windows::Win32::Foundation::HANDLE,
+        process_information_class: u32,
+        process_information: *const core::ffi::c_void,
+        information_length: u32,
+    ) -> i32;
+}
+
 fn set_process_io_priority(pid: Pid) -> (bool, Option<String>) {
     unsafe {
         use windows::Win32::Foundation::CloseHandle;
         use windows::Win32::System::Threading::{
-            OpenProcess, SetProcessInformation, PROCESS_INFORMATION_CLASS,
-            PROCESS_QUERY_INFORMATION, PROCESS_SET_INFORMATION,
+            OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_SET_INFORMATION,
         };
 
         let process_handle = match OpenProcess(
@@ -342,19 +375,25 @@ fn set_process_io_priority(pid: Pid) -> (bool, Option<String>) {
             return (false, Some("进程句柄无效".to_string()));
         }
 
-        let io_priority: u32 = 0;
-        let result = SetProcessInformation(
+        let io_priority: u32 = PROCESS_IO_PRIORITY_VERY_LOW;
+        let status = NtSetInformationProcess(
             process_handle,
-            PROCESS_INFORMATION_CLASS(33),
+            PROCESS_IO_PRIORITY_INFO_CLASS,
             &io_priority as *const _ as *const _,
             std::mem::size_of::<u32>() as u32,
         );
 
         let _ = CloseHandle(process_handle);
 
-        if let Err(e) = &result {
-            eprintln!("[I/O优先级] PID {} SetProcessInformation失败: {:?}", pid, e);
-            return (false, Some(format!("设置I/O优先级失败: {:?}", e)));
+        if status != 0 {
+            eprintln!(
+                "[I/O优先级] PID {} NtSetInformationProcess失败: NTSTATUS {:#x}",
+                pid, status
+            );
+            return (
+                false,
+                Some(format!("设置I/O优先级失败: NTSTATUS {:#x}", status)),
+            );
         }
 
         (true, None)
@@ -365,7 +404,8 @@ fn set_process_memory_priority(pid: Pid) -> (bool, Option<String>) {
     unsafe {
         use windows::Win32::Foundation::CloseHandle;
         use windows::Win32::System::Threading::{
-            OpenProcess, SetProcessInformation, PROCESS_INFORMATION_CLASS,
+            OpenProcess, SetProcessInformation, ProcessMemoryPriority,
+            MEMORY_PRIORITY_INFORMATION, MEMORY_PRIORITY_VERY_LOW,
             PROCESS_QUERY_INFORMATION, PROCESS_SET_INFORMATION,
         };
 
@@ -386,12 +426,16 @@ fn set_process_memory_priority(pid: Pid) -> (bool, Option<String>) {
             return (false, Some("进程句柄无效".to_string()));
         }
 
-        let memory_priority: u32 = 1;
+        // SetProcessInformation 的 Win32 枚举中内存优先级是 ProcessMemoryPriority(0)，
+        // 39 是内核编号 ProcessPagePriority，传 39 会固定返回 ERROR_INVALID_PARAMETER
+        let memory_priority = MEMORY_PRIORITY_INFORMATION {
+            MemoryPriority: MEMORY_PRIORITY_VERY_LOW,
+        };
         let result = SetProcessInformation(
             process_handle,
-            PROCESS_INFORMATION_CLASS(39),
+            ProcessMemoryPriority,
             &memory_priority as *const _ as *const _,
-            std::mem::size_of::<u32>() as u32,
+            std::mem::size_of::<MEMORY_PRIORITY_INFORMATION>() as u32,
         );
 
         let _ = CloseHandle(process_handle);
@@ -429,23 +473,25 @@ fn restrict_single_process(
         false
     };
 
-    let (efficiency_ok, io_priority_ok, mem_priority_ok) = {
-        let (eff_ok, _) = if enable_efficiency_mode {
-            set_process_efficiency_mode(pid)
-        } else {
-            (false, None)
-        };
-        let (io_ok, _) = if enable_io_priority {
-            set_process_io_priority(pid)
-        } else {
-            (false, None)
-        };
-        let (mem_ok, _) = if enable_memory_priority {
-            set_process_memory_priority(pid)
-        } else {
-            (false, None)
-        };
-        (eff_ok, io_ok, mem_ok)
+    let (efficiency_ok, eff_err) = if enable_efficiency_mode {
+        set_process_efficiency_mode(pid)
+    } else {
+        (false, None)
+    };
+    let (io_priority_ok, io_err) = if enable_io_priority {
+        set_process_io_priority(pid)
+    } else {
+        (false, None)
+    };
+    let (mem_priority_ok, mem_err) = if enable_memory_priority {
+        set_process_memory_priority(pid)
+    } else {
+        (false, None)
+    };
+
+    let fail_detail = |name: &str, err: Option<String>| match err {
+        Some(e) => format!("{}✗({})", name, e),
+        None => format!("{}✗", name),
     };
 
     let mut details = Vec::new();
@@ -463,12 +509,18 @@ fn restrict_single_process(
     }
     if efficiency_ok {
         details.push("效率模式✓".to_string());
+    } else if enable_efficiency_mode {
+        details.push(fail_detail("效率模式", eff_err));
     }
     if io_priority_ok {
         details.push("I/O优先级✓".to_string());
+    } else if enable_io_priority {
+        details.push(fail_detail("I/O优先级", io_err));
     }
     if mem_priority_ok {
         details.push("内存优先级✓".to_string());
+    } else if enable_memory_priority {
+        details.push(fail_detail("内存优先级", mem_err));
     }
 
     let restricted = affinity_ok || priority_ok || efficiency_ok || io_priority_ok || mem_priority_ok;

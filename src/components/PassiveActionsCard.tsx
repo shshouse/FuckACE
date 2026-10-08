@@ -25,7 +25,7 @@ export function PassiveActionsCard({
 }: PassiveActionsCardProps) {
   return (
     <Paper elevation={2} sx={{ p: 1.5, flex: 1, minWidth: 0, maxWidth: '100%', display: 'flex', flexDirection: 'column' }}>
-      <Typography variant="subtitle1" gutterBottom sx={{ mb: 0.5, fontWeight: 600, textAlign: 'center' }}>
+      <Typography variant="subtitle1" gutterBottom sx={{ mb: 0.5, fontWeight: 600 }}>
         被动限制(开游戏前使用)
       </Typography>
       <Box display="flex" flexDirection="column" gap={0.4} sx={{ flex: 1 }}>
