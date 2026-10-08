@@ -84,11 +84,11 @@ function App() {
   const [memoryStatus, setMemoryStatus] = useState<MemoryCleanStatus | null>(null);
   const [cleaning, setCleaning] = useState(false);
   const [autoMemoryCleanOnGameStart, setAutoMemoryCleanOnGameStart] = useState(false);
-  const [hasAutoCleanedForGame, setHasAutoCleanedForGame] = useState(false);
   const [autoMemoryCleanThreshold, setAutoMemoryCleanThreshold] = useState<number | null>(null);
   const lastThresholdCleanRef = useRef(0);
   const prevIoSamplesRef = useRef<IoSampleMap>(new Map());
   const prevTargetPidsRef = useRef<Set<number>>(new Set());
+  const prevCleanPidsRef = useRef<Set<number>>(new Set());
 
   const gameProcesses = performance.map((process) => process.name.replace(/\.exe$/i, ''));
   const { announcements, latestVersion, hasUpdate, fetchError } = useInitialData(APP_VERSION);
@@ -444,33 +444,35 @@ function App() {
     systemInfo,
   ]);
 
+  // 自动内存清理：以 PID 增量为触发条件（与自动限制同一思路）。
+  // 预启动常驻进程不会反复触发，游戏新拉起的 ACE 进程出现时清理一次
   useEffect(() => {
-    const aceFound = hasAceProcess(performance);
+    if (!autoMemoryCleanOnGameStart || cleaning) {
+      return;
+    }
 
-    if (autoMemoryCleanOnGameStart && aceFound && !hasAutoCleanedForGame && !cleaning) {
-      setHasAutoCleanedForGame(true);
-      addLog('检测到游戏启动，自动执行一次内存清理...');
+    const currentPids = new Set(performance.map((process) => process.pid));
+    const hasNewProcess = [...currentPids].some((pid) => !prevCleanPidsRef.current.has(pid));
+    prevCleanPidsRef.current = currentPids;
+
+    if (hasNewProcess && currentPids.size > 0) {
+      addLog('检测到ACE进程，自动执行一次内存清理...');
       void performCleanup();
     }
+  }, [addLog, autoMemoryCleanOnGameStart, cleaning, performance, performCleanup]);
 
-    if (!aceFound) {
-      if (hasAutoRestricted) {
-        addLog('ACE进程已关闭，显示窗口');
-        void getCurrentWindow().show();
-        void getCurrentWindow().setFocus();
-      }
-      setHasAutoRestricted(false);
-      setHasAutoCleanedForGame(false);
+  useEffect(() => {
+    if (hasAceProcess(performance)) {
+      return;
     }
-  }, [
-    addLog,
-    autoMemoryCleanOnGameStart,
-    cleaning,
-    hasAutoCleanedForGame,
-    hasAutoRestricted,
-    performance,
-    performCleanup,
-  ]);
+
+    if (hasAutoRestricted) {
+      addLog('ACE进程已关闭，显示窗口');
+      void getCurrentWindow().show();
+      void getCurrentWindow().setFocus();
+    }
+    setHasAutoRestricted(false);
+  }, [addLog, hasAutoRestricted, performance]);
 
   useEffect(() => {
     if (autoMemoryCleanThreshold === null || !memoryStatus || cleaning) return;

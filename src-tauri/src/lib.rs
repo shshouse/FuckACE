@@ -127,7 +127,7 @@ fn set_game_registry_priority(exe_name: &str, cpu: u32, io: u32) -> Result<Strin
     }
 }
 
-fn resolve_affinity(custom_cores: Option<Vec<u32>>) -> (Vec<u32>, u64, bool, bool) {
+fn resolve_affinity(custom_cores: Option<Vec<u32>>) -> (Vec<u32>, u64, bool) {
     let mut system = System::new();
     system.refresh_cpu_all();
     let total_cores = system.cpus().len() as u32;
@@ -141,12 +141,12 @@ fn resolve_affinity(custom_cores: Option<Vec<u32>>) -> (Vec<u32>, u64, bool, boo
         valid.dedup();
         if !valid.is_empty() {
             let core_mask = valid.iter().fold(0u64, |mask, core| mask | (1u64 << core));
-            return (valid, core_mask, false, true);
+            return (valid, core_mask, true);
         }
     }
 
     let target_core = if total_cores > 0 { total_cores - 1 } else { 0 };
-    (vec![target_core], 1u64 << target_core, false, false)
+    (vec![target_core], 1u64 << target_core, false)
 }
 
 fn format_core_mask(core_mask: u64) -> String {
@@ -199,15 +199,14 @@ fn set_process_affinity(pid: Pid, core_mask: u64) -> (bool, Option<String>) {
 fn set_process_affinity_with_fallback(
     pid: Pid,
     primary_core_mask: u64,
-    is_e_core: bool,
 ) -> (bool, Option<String>, u64) {
     let (success, error) = set_process_affinity(pid, primary_core_mask);
 
-    if success || !is_e_core {
+    if success {
         return (success, error, primary_core_mask);
     }
 
-    eprintln!("进程亲和性PID {} E-Core绑定失败，尝试备用方案", pid);
+    eprintln!("进程亲和性PID {} 绑定失败，尝试绑定到最后一个逻辑核心", pid);
     let mut system = System::new();
     system.refresh_cpu_all();
     let total_cores = system.cpus().len() as u32;
@@ -227,7 +226,7 @@ fn set_process_affinity_with_fallback(
     }
 }
 
-fn set_process_priority(pid: Pid) -> bool {
+fn set_process_priority(pid: Pid) -> (bool, Option<String>) {
     unsafe {
         use windows::Win32::Foundation::CloseHandle;
         use windows::Win32::System::Threading::{
@@ -243,13 +242,13 @@ fn set_process_priority(pid: Pid) -> bool {
             Ok(handle) => handle,
             Err(e) => {
                 eprintln!("[进程优先级] PID {} OpenProcess失败: {:?}", pid, e);
-                return false;
+                return (false, Some(format!("打开进程失败: {:?}", e)));
             }
         };
 
         if process_handle.is_invalid() {
             eprintln!("[进程优先级] PID {} 进程句柄无效", pid);
-            return false;
+            return (false, Some("进程句柄无效".to_string()));
         }
 
         let result = SetPriorityClass(process_handle, IDLE_PRIORITY_CLASS);
@@ -258,9 +257,10 @@ fn set_process_priority(pid: Pid) -> bool {
 
         if let Err(e) = &result {
             eprintln!("[进程优先级] PID {} SetPriorityClass失败: {:?}", pid, e);
+            return (false, Some(format!("设置优先级失败: {:?}", e)));
         }
 
-        result.is_ok()
+        (true, None)
     }
 }
 
@@ -460,17 +460,16 @@ fn restrict_single_process(
     enable_io_priority: bool,
     enable_memory_priority: bool,
     core_mask: u64,
-    is_e_core: bool,
 ) -> (bool, Vec<String>) {
     let (affinity_ok, affinity_err, actual_mask) = if enable_cpu_affinity {
-        set_process_affinity_with_fallback(pid, core_mask, is_e_core)
+        set_process_affinity_with_fallback(pid, core_mask)
     } else {
         (false, None, 0)
     };
-    let priority_ok = if enable_process_priority {
+    let (priority_ok, priority_err) = if enable_process_priority {
         set_process_priority(pid)
     } else {
-        false
+        (false, None)
     };
 
     let (efficiency_ok, eff_err) = if enable_efficiency_mode {
@@ -504,6 +503,8 @@ fn restrict_single_process(
     }
     if priority_ok {
         details.push("优先级→最低".to_string());
+    } else if let Some(err) = &priority_err {
+        details.push(format!("优先级✗({})", err));
     } else {
         details.push("优先级✗".to_string());
     }
@@ -535,12 +536,10 @@ fn restrict_target_processes(
     enable_memory_priority: bool,
     affinity_cores: Option<Vec<u32>>,
 ) -> RestrictResult {
-    enable_debug_privilege();
-
     let mut system = System::new();
     system.refresh_processes(ProcessesToUpdate::All, true);
 
-    let (target_cores, core_mask, is_e_core, is_custom) = resolve_affinity(affinity_cores);
+    let (target_cores, core_mask, is_custom) = resolve_affinity(affinity_cores);
 
     // (匹配用的进程名小写, 展示名, 结果字段索引)
     let targets = [
@@ -553,6 +552,10 @@ fn restrict_target_processes(
     let mut restricted = [false; 4];
 
     let mut message = String::new();
+
+    if !enable_debug_privilege() {
+        message.push_str("警告: SeDebugPrivilege 提权失败，系统级进程可能无法限制\n");
+    }
 
     let mode_parts: Vec<&str> = vec![
         if enable_cpu_affinity {
@@ -612,7 +615,7 @@ fn restrict_target_processes(
                 let (ok, details) = restrict_single_process(
                     *pid, enable_cpu_affinity, enable_process_priority,
                     enable_efficiency_mode, enable_io_priority, enable_memory_priority,
-                    core_mask, is_e_core,
+                    core_mask,
                 );
                 let details_str = details.join(", ");
                 if ok {
@@ -1557,25 +1560,29 @@ struct MemoryCleanResult {
 
 #[tauri::command]
 async fn clean_memory_and_temp() -> MemoryCleanResult {
-    enable_debug_privilege();
-    enable_privilege("SeIncreaseQuotaPrivilege");
+    let mut messages = Vec::new();
+
+    if !enable_debug_privilege() {
+        messages.push("警告: SeDebugPrivilege 提权失败".to_string());
+    }
+    if !enable_privilege("SeIncreaseQuotaPrivilege") {
+        messages.push("警告: SeIncreaseQuotaPrivilege 提权失败，部分进程可能无法修剪".to_string());
+    }
 
     let mut system_before = System::new();
     system_before.refresh_memory();
     let used_before = system_before.used_memory();
 
     let stats = empty_safe_working_sets();
-    let mut messages = vec![
-        format!(
-            "安全清理完成，已修剪 {}/{} 个普通后台进程工作集",
-            stats.processes_trimmed, stats.processes_attempted
-        ),
-        format!(
-            "已跳过 {} 个游戏/ACE/系统/自身保护进程",
-            stats.protected_skipped
-        ),
-        "已跳过系统缓存/Standby List清理，避免影响游戏资源缓存".to_string(),
-    ];
+    messages.push(format!(
+        "安全清理完成，已修剪 {}/{} 个普通后台进程工作集",
+        stats.processes_trimmed, stats.processes_attempted
+    ));
+    messages.push(format!(
+        "已跳过 {} 个游戏/ACE/系统/自身保护进程",
+        stats.protected_skipped
+    ));
+    messages.push("已跳过系统缓存/Standby List清理，避免影响游戏资源缓存".to_string());
 
     std::thread::sleep(std::time::Duration::from_millis(400));
 
