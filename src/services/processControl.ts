@@ -204,6 +204,10 @@ export async function getMemoryCleanStatus() {
   return invoke<MemoryCleanStatus>('get_memory_clean_status');
 }
 
+export async function syncTrayState(statusText: string, autoRestrict: boolean, autostart: boolean) {
+  return invoke<void>('sync_tray_state', { statusText, autoRestrict, autostart });
+}
+
 export async function cleanMemoryAndTemp() {
   return invoke<MemoryCleanResult>('clean_memory_and_temp');
 }

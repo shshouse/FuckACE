@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 use sysinfo::{Pid, ProcessesToUpdate, System};
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, State, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
 use winreg::enums::*;
 use winreg::RegKey;
 
@@ -1110,18 +1110,48 @@ fn hide_main_window(app: &AppHandle) {
     }
 }
 
+fn toggle_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let visible = window.is_visible().unwrap_or(false);
+        let minimized = window.is_minimized().unwrap_or(false);
+        if visible && !minimized {
+            let _ = window.hide();
+        } else {
+            show_main_window(app);
+        }
+    }
+}
+
+// 托盘菜单句柄：前端状态变化时通过 sync_tray_state 更新状态行与开关勾选
+struct TrayMenuState {
+    status_item: MenuItem<tauri::Wry>,
+    auto_restrict_item: CheckMenuItem<tauri::Wry>,
+    autostart_item: CheckMenuItem<tauri::Wry>,
+}
+
 fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
+    let status = MenuItem::with_id(app, "status", "ACE: 未运行", false, None::<&str>)?;
+    let restrict_now = MenuItem::with_id(app, "restrict-now", "立即限制 ACE", true, None::<&str>)?;
+    let clean_now = MenuItem::with_id(app, "clean-now", "立即清理内存", true, None::<&str>)?;
+    let auto_restrict =
+        CheckMenuItem::with_id(app, "toggle-autorestrict", "自动限制", true, false, None::<&str>)?;
+    let autostart =
+        CheckMenuItem::with_id(app, "toggle-autostart", "开机自启", true, false, None::<&str>)?;
     let show = MenuItem::with_id(app, "show", "显示窗口", true, None::<&str>)?;
-    let hide = MenuItem::with_id(app, "hide", "隐藏到托盘", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
 
     let menu = Menu::with_items(
         app,
         &[
+            &status,
+            &PredefinedMenuItem::separator(app)?,
+            &restrict_now,
+            &clean_now,
+            &PredefinedMenuItem::separator(app)?,
+            &auto_restrict,
+            &autostart,
+            &PredefinedMenuItem::separator(app)?,
             &show,
-            &PredefinedMenuItem::separator(app)?,
-            &hide,
-            &PredefinedMenuItem::separator(app)?,
             &quit,
         ],
     )?;
@@ -1131,34 +1161,71 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
         .icon(app.default_window_icon().unwrap().clone())
         .menu(&menu)
         .show_menu_on_left_click(false)
-        .on_tray_icon_event(|tray, event| match event {
-            TrayIconEvent::Click {
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
                 button: tauri::tray::MouseButton::Left,
                 ..
-            } => {
-                show_main_window(tray.app_handle());
+            } = event
+            {
+                toggle_main_window(tray.app_handle());
             }
-            TrayIconEvent::DoubleClick {
-                button: tauri::tray::MouseButton::Left,
-                ..
-            } => {
-                show_main_window(tray.app_handle());
-            }
-            _ => {}
         })
         .on_menu_event(|app, event| match event.id().as_ref() {
-            "quit" => {
-                std::process::exit(0);
+            "restrict-now" => {
+                let _ = app.emit("tray://restrict-now", ());
+            }
+            "clean-now" => {
+                let _ = app.emit("tray://clean-now", ());
+            }
+            "toggle-autorestrict" => {
+                let _ = app.emit("tray://toggle-autorestrict", ());
+            }
+            "toggle-autostart" => {
+                let _ = app.emit("tray://toggle-autostart", ());
             }
             "show" => {
                 show_main_window(app);
             }
-            "hide" => {
-                hide_main_window(app);
+            "quit" => {
+                std::process::exit(0);
             }
             _ => {}
         })
         .build(app)?;
+
+    app.manage(TrayMenuState {
+        status_item: status,
+        auto_restrict_item: auto_restrict,
+        autostart_item: autostart,
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+fn sync_tray_state(
+    app: AppHandle,
+    state: State<'_, TrayMenuState>,
+    status_text: String,
+    auto_restrict: bool,
+    autostart: bool,
+) -> Result<(), String> {
+    state
+        .status_item
+        .set_text(&status_text)
+        .map_err(|e| format!("更新托盘状态失败: {e}"))?;
+    state
+        .auto_restrict_item
+        .set_checked(auto_restrict)
+        .map_err(|e| format!("更新自动限制开关失败: {e}"))?;
+    state
+        .autostart_item
+        .set_checked(autostart)
+        .map_err(|e| format!("更新开机自启开关失败: {e}"))?;
+
+    if let Some(tray) = app.tray_by_id("main-tray") {
+        let _ = tray.set_tooltip(Some(format!("FuckACE · {status_text}")));
+    }
 
     Ok(())
 }
@@ -1710,6 +1777,7 @@ pub fn run() {
             raise_calabiyau_priority,
             get_memory_clean_status,
             clean_memory_and_temp,
+            sync_tray_state,
 
         ])
         .run(tauri::generate_context!())

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { listen } from '@tauri-apps/api/event';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Box, Container, CssBaseline, ThemeProvider } from '@mui/material';
@@ -30,6 +31,7 @@ import {
   resetRegistryPriorityCommand,
   restrictProcesses,
   setAutoStartState,
+  syncTrayState,
   type IoSampleMap,
   type LoggedCommandDefinition,
 } from './services/processControl';
@@ -494,6 +496,53 @@ function App() {
     void getCurrentWindow().show().catch(() => {});
     void getCurrentWindow().setFocus().catch(() => {});
   }, [hasUpdate]);
+
+  // 托盘右键菜单的动作转发：菜单由 Rust 侧持有，这里执行与前端的同一套逻辑
+  useEffect(() => {
+    const unlistenPromises = [
+      listen('tray://restrict-now', () => {
+        void executeOnce();
+      }),
+      listen('tray://clean-now', () => {
+        void performCleanup();
+      }),
+      listen('tray://toggle-autorestrict', () => {
+        setAutoRestrict((value) => !value);
+      }),
+      listen('tray://toggle-autostart', () => {
+        void toggleAutoStartup();
+      }),
+    ];
+
+    return () => {
+      unlistenPromises.forEach((promise) => {
+        void promise.then((unlisten) => unlisten());
+      });
+    };
+  }, [executeOnce, performCleanup, toggleAutoStartup]);
+
+  const trayStatusText = useMemo(() => {
+    if (!hasAceProcess(performance)) {
+      return 'ACE: 未运行';
+    }
+
+    const targets: Array<[boolean | undefined, boolean | undefined]> = [
+      [processStatus?.sguard64_found, processStatus?.sguard64_restricted],
+      [processStatus?.sguardsvc64_found, processStatus?.sguardsvc64_restricted],
+      [processStatus?.ace_tray_found, processStatus?.ace_tray_restricted],
+      [processStatus?.ace_service_found, processStatus?.ace_service_restricted],
+    ];
+    const foundTargets = targets.filter(([found]) => found);
+    const allRestricted = foundTargets.length > 0 && foundTargets.every(([, restricted]) => restricted);
+
+    return allRestricted ? 'ACE: 运行中 · 已限制' : 'ACE: 运行中 · 未限制';
+  }, [performance, processStatus]);
+
+  useEffect(() => {
+    void syncTrayState(trayStatusText, autoRestrict, autoStartEnabled).catch((error) => {
+      console.error('同步托盘状态失败:', error);
+    });
+  }, [trayStatusText, autoRestrict, autoStartEnabled]);
 
   const handleSettingChange = useCallback((key: RestrictionSettingKey, checked: boolean) => {
     restrictionSettingSetters[key](checked);
