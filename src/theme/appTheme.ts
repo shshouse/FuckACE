@@ -1,6 +1,30 @@
 import { createTheme } from '@mui/material/styles';
 
-export const lightTheme = createTheme();//主题样式，刺客边风有你好果子吃
+// 细窄滚动条样式，避免 WebView 默认滚动条在暗色界面下过亮
+const createScrollbarOverrides = (thumb: string, thumbHover: string) => ({
+  '*::-webkit-scrollbar': {
+    width: 8,
+    height: 8,
+  },
+  '*::-webkit-scrollbar-track': {
+    background: 'transparent',
+  },
+  '*::-webkit-scrollbar-thumb': {
+    backgroundColor: thumb,
+    borderRadius: 4,
+  },
+  '*::-webkit-scrollbar-thumb:hover': {
+    backgroundColor: thumbHover,
+  },
+});
+
+export const lightTheme = createTheme({
+  components: {
+    MuiCssBaseline: {
+      styleOverrides: createScrollbarOverrides('rgba(0, 0, 0, 0.2)', 'rgba(0, 0, 0, 0.35)'),
+    },
+  },
+});//主题样式，刺客边风有你好果子吃
 export const darkTheme = createTheme({
   palette: {
     mode: 'dark',
@@ -37,6 +61,9 @@ export const darkTheme = createTheme({
     },
   },
   components: {
+    MuiCssBaseline: {
+      styleOverrides: createScrollbarOverrides('rgba(255, 255, 255, 0.18)', 'rgba(255, 255, 255, 0.32)'),
+    },
     MuiPaper: {
       styleOverrides: {
         root: {

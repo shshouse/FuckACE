@@ -13,6 +13,7 @@ import { PerformancePanel } from './components/PerformancePanel';
 import { RestrictionControlCard } from './components/RestrictionControlCard';
 import { SystemInfoCard } from './components/SystemInfoCard';
 import { AnnouncementsDialog } from './components/dialogs/AnnouncementsDialog';
+import { RiskSettingDialog } from './components/dialogs/RiskSettingDialog';
 import { UpdateDialog } from './components/dialogs/UpdateDialog';
 import { APP_VERSION } from './constants';
 import { useInitialData } from './services/api';
@@ -59,13 +60,19 @@ const restrictionSettingKeys: RestrictionSettingKey[] = [
   'autoRestrict',
 ];
 
+// 风险相对较大的两项：开启前需二次确认；旧版本中已开启的在升级时强制关闭
+const riskySettingLabels: Partial<Record<RestrictionSettingKey, string>> = {
+  enableIoPriority: 'I/O优先级',
+  enableMemoryPriority: '内存优先级',
+};
+
 function App() {
   const [isMonitoring, setIsMonitoring] = useState(false);
   const [targetCores, setTargetCores] = useState<number[]>([]);
   const [processStatus, setProcessStatus] = useState<ProcessStatus | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(false);
-  const [darkMode, setDarkMode] = useState(true);
+  const [darkMode, setDarkMode] = useState(() => storage.getChoices().darkMode ?? true);
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
   const logContainerRef = useRef<HTMLDivElement>(null);
   const [performance, setPerformance] = useState<ProcessPerformance[]>([]);
@@ -81,6 +88,7 @@ function App() {
   const [showAnnouncements, setShowAnnouncements] = useState(false);
   const [showUpdateDialog, setShowUpdateDialog] = useState(false);
   const [showAffinityDialog, setShowAffinityDialog] = useState(false);
+  const [pendingRiskSetting, setPendingRiskSetting] = useState<RestrictionSettingKey | null>(null);
   const [affinityCores, setAffinityCores] = useState<number[]>([]);
   const [exportingReport, setExportingReport] = useState(false);
   const [memoryStatus, setMemoryStatus] = useState<MemoryCleanStatus | null>(null);
@@ -370,6 +378,17 @@ function App() {
       autoMemoryCleanOnGameStart?: boolean;
     };
 
+    // 一次性迁移：旧版本中已开启的 I/O 优先级、内存优先级统一关闭，之后由用户确认后再开启
+    if (cachedChoices.riskySwitchesMigrated !== true) {
+      cachedChoices.enableIoPriority = false;
+      cachedChoices.enableMemoryPriority = false;
+      storage.saveChoices({
+        enableIoPriority: false,
+        enableMemoryPriority: false,
+        riskySwitchesMigrated: true,
+      });
+    }
+
     if (!cachedChoices.rememberChoices) {
       return;
     }
@@ -407,6 +426,7 @@ function App() {
       rememberChoices: true,
       autoMemoryCleanThreshold,
       affinityCores,
+      darkMode,
     } as Parameters<typeof storage.saveChoices>[0] & {
       autoMemoryCleanOnGameStart: boolean;
     });
@@ -420,6 +440,7 @@ function App() {
     autoMemoryCleanOnGameStart,
     autoMemoryCleanThreshold,
     affinityCores,
+    darkMode,
   ]);
 
   useEffect(() => {
@@ -545,8 +566,23 @@ function App() {
   }, [trayStatusText, autoRestrict, autoStartEnabled]);
 
   const handleSettingChange = useCallback((key: RestrictionSettingKey, checked: boolean) => {
+    // 高风险项开启前先弹确认框，关闭时直接生效
+    if (checked && riskySettingLabels[key]) {
+      setPendingRiskSetting(key);
+      return;
+    }
+
     restrictionSettingSetters[key](checked);
   }, [restrictionSettingSetters]);
+
+  const confirmPendingRiskSetting = () => {
+    if (!pendingRiskSetting) {
+      return;
+    }
+
+    restrictionSettingSetters[pendingRiskSetting](true);
+    setPendingRiskSetting(null);
+  };
 
   const toggleDarkMode = () => {
     setDarkMode((currentValue) => !currentValue);
@@ -589,7 +625,7 @@ function App() {
 
   return (
     <ThemeProvider theme={currentTheme}>
-      <CssBaseline />
+      <CssBaseline enableColorScheme />
       <Container maxWidth="lg" sx={{ py: 1, height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <AppHeader
           appVersion={APP_VERSION}
@@ -683,6 +719,13 @@ function App() {
           value={affinityCores}
           onConfirm={setAffinityCores}
           onClose={() => setShowAffinityDialog(false)}
+        />
+
+        <RiskSettingDialog
+          open={pendingRiskSetting !== null}
+          settingLabel={pendingRiskSetting ? riskySettingLabels[pendingRiskSetting] ?? '' : ''}
+          onCancel={() => setPendingRiskSetting(null)}
+          onConfirm={confirmPendingRiskSetting}
         />
 
         <FetchErrorSnackbar open={fetchError} />
