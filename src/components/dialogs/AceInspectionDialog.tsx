@@ -114,7 +114,33 @@ export function AceInspectionDialog({ open, onClose }: AceInspectionDialogProps)
               <ReportSection title="进程" items={report.processes} />
               <ReportSection title="服务" items={report.services} />
               <ReportSection title="驱动" items={report.drivers} />
-              <ReportSection title="安装目录" items={report.directories} />
+              <Box>
+                <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 0.5 }}>
+                  安装位置（{report.installations.length}）
+                </Typography>
+                {report.installations.length === 0 ? (
+                  <Typography variant="caption" color="text.secondary">
+                    无
+                  </Typography>
+                ) : (
+                  <Paper variant="outlined" sx={{ p: 0.8 }}>
+                    <Stack spacing={0.6}>
+                      {report.installations.map((item) => (
+                        <Box key={item.path}>
+                          <Stack direction="row" spacing={1} alignItems="baseline" justifyContent="space-between">
+                            <Typography variant="caption" noWrap title={item.path} sx={{ maxWidth: '62%' }}>
+                              {item.path}
+                            </Typography>
+                            <Typography variant="caption" color={item.active ? 'primary.main' : 'text.secondary'}>
+                              {item.kind} · {item.size_mb.toFixed(1)} MB · {item.files} 个文件 · {item.active ? '使用中' : '未引用'}
+                            </Typography>
+                          </Stack>
+                        </Box>
+                      ))}
+                    </Stack>
+                  </Paper>
+                )}
+              </Box>
             </>
           )}
         </Stack>

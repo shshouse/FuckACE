@@ -7,8 +7,6 @@ import type {
   ProcessPerformance,
   ProcessStatus,
   RestrictionSettings,
-  ShaderCacheInfo,
-  ShaderCleanResult,
   SystemInfo,
 } from '../types/app';
 
@@ -288,14 +286,6 @@ export function buildPerformancePoint(
     aceservice_mem: aceServiceProcess ? parseFloat(aceServiceProcess.memory_mb.toFixed(1)) : null,
     aceservice_io: computeIoRateKbPerSec(aceServiceProcess, prevIoSamples, nowMs),
   };
-}
-
-export async function getShaderCacheInfo(): Promise<ShaderCacheInfo> {
-  return invoke<ShaderCacheInfo>('get_shader_cache_info');
-}
-
-export async function cleanShaderCaches(): Promise<ShaderCleanResult> {
-  return invoke<ShaderCleanResult>('clean_shader_caches');
 }
 
 export async function getAceReport(): Promise<AceReport> {

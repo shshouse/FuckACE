@@ -1720,52 +1720,40 @@ fn get_desktop_path() -> Result<std::path::PathBuf, String> {
     Err("无法获取桌面路径".to_string())
 }
 
-// ===== 着色器缓存清理 =====
+// ===== ACE 体检（只读诊断） =====
 
 #[derive(Debug, Serialize)]
-struct ShaderCacheItem {
-    label: String,
+struct AceReportItem {
+    level: String,
+    title: String,
+    detail: String,
+}
+
+#[derive(Debug, Serialize)]
+struct AceInstallation {
     path: String,
-    bytes: u64,
+    kind: String,
+    size_mb: f64,
+    files: usize,
+    active: bool,
 }
 
 #[derive(Debug, Serialize)]
-struct ShaderCacheInfo {
-    total_bytes: u64,
-    items: Vec<ShaderCacheItem>,
+struct AceReport {
+    installed: bool,
+    processes: Vec<String>,
+    services: Vec<String>,
+    drivers: Vec<String>,
+    installations: Vec<AceInstallation>,
+    items: Vec<AceReportItem>,
 }
 
-#[derive(Debug, Serialize)]
-struct ShaderCleanResult {
-    freed_bytes: u64,
-    removed_count: usize,
-    skipped_count: usize,
-}
-
-/// 只覆盖显卡驱动与 DirectX 的通用着色器缓存目录，均为可再生成的缓存文件
-fn shader_cache_targets() -> Vec<(&'static str, PathBuf)> {
-    let mut targets = Vec::new();
-
-    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
-        let base = PathBuf::from(local);
-        let candidates = [
-            ("DirectX 着色器缓存", "D3DSCache"),
-            ("NVIDIA DXCache", "NVIDIA\\DXCache"),
-            ("NVIDIA GLCache", "NVIDIA\\GLCache"),
-            ("AMD DxCache", "AMD\\DxCache"),
-            ("AMD DxcCache", "AMD\\DxcCache"),
-            ("Intel 着色器缓存", "Intel\\ShaderCache"),
-        ];
-
-        for (label, relative) in candidates {
-            let path = base.join(relative);
-            if path.is_dir() {
-                targets.push((label, path));
-            }
-        }
+fn ace_item(level: &str, title: &str, detail: &str) -> AceReportItem {
+    AceReportItem {
+        level: level.to_string(),
+        title: title.to_string(),
+        detail: detail.to_string(),
     }
-
-    targets
 }
 
 fn path_size(path: &Path) -> u64 {
@@ -1784,95 +1772,34 @@ fn path_size(path: &Path) -> u64 {
     total
 }
 
-#[tauri::command]
-async fn get_shader_cache_info() -> ShaderCacheInfo {
-    let mut items = Vec::new();
+fn dir_footprint(path: &Path) -> (usize, u64) {
+    let mut files = 0usize;
+    let mut bytes = 0u64;
+    let mut stack = vec![path.to_path_buf()];
+    let mut visited = 0usize;
 
-    for (label, path) in shader_cache_targets() {
-        let bytes = path_size(&path);
-        if bytes == 0 {
-            continue;
+    while let Some(current) = stack.pop() {
+        visited += 1;
+        if visited > 20000 {
+            break;
         }
 
-        items.push(ShaderCacheItem {
-            label: label.to_string(),
-            path: path.to_string_lossy().to_string(),
-            bytes,
-        });
-    }
-
-    items.sort_by(|a, b| b.bytes.cmp(&a.bytes));
-    let total_bytes = items.iter().map(|item| item.bytes).sum();
-
-    ShaderCacheInfo { total_bytes, items }
-}
-
-#[tauri::command]
-async fn clean_shader_caches() -> ShaderCleanResult {
-    let mut freed_bytes = 0u64;
-    let mut removed_count = 0usize;
-    let mut skipped_count = 0usize;
-
-    for (_, path) in shader_cache_targets() {
-        let entries = match std::fs::read_dir(&path) {
-            Ok(entries) => entries,
-            Err(_) => continue,
-        };
-
-        for entry in entries.flatten() {
-            let entry_path = entry.path();
-            let size = path_size(&entry_path);
-            let result = if entry_path.is_dir() {
-                std::fs::remove_dir_all(&entry_path)
-            } else {
-                std::fs::remove_file(&entry_path)
-            };
-
-            match result {
-                Ok(_) => {
-                    freed_bytes += size;
-                    removed_count += 1;
-                }
-                Err(_) => {
-                    // 正在被游戏或驱动占用的缓存文件跳过即可，不视为失败
-                    skipped_count += 1;
+        if let Ok(entries) = std::fs::read_dir(&current) {
+            for entry in entries.flatten() {
+                let entry_path = entry.path();
+                match entry.file_type() {
+                    Ok(kind) if kind.is_dir() => stack.push(entry_path),
+                    Ok(_) => {
+                        files += 1;
+                        bytes += entry.metadata().map(|meta| meta.len()).unwrap_or(0);
+                    }
+                    _ => {}
                 }
             }
         }
     }
 
-    ShaderCleanResult {
-        freed_bytes,
-        removed_count,
-        skipped_count,
-    }
-}
-
-// ===== ACE 体检（只读诊断） =====
-
-#[derive(Debug, Serialize)]
-struct AceReportItem {
-    level: String,
-    title: String,
-    detail: String,
-}
-
-#[derive(Debug, Serialize)]
-struct AceReport {
-    installed: bool,
-    processes: Vec<String>,
-    services: Vec<String>,
-    drivers: Vec<String>,
-    directories: Vec<String>,
-    items: Vec<AceReportItem>,
-}
-
-fn ace_item(level: &str, title: &str, detail: &str) -> AceReportItem {
-    AceReportItem {
-        level: level.to_string(),
-        title: title.to_string(),
-        detail: detail.to_string(),
-    }
+    (files, bytes)
 }
 
 /// 把服务/驱动的 ImagePath 还原成可检查的绝对路径
@@ -1883,22 +1810,16 @@ fn resolve_image_path(raw: &str) -> PathBuf {
         path = stripped.to_string();
     }
 
-    let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_string());
+    let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:/Windows".to_string());
 
     if let Some(stripped) = path.strip_prefix(r"\SystemRoot\") {
         return PathBuf::from(format!(r"{}\{}", system_root, stripped));
     }
 
-    if path.starts_with(r"\SystemRoot") {
-        return PathBuf::from(system_root);
-    }
-
-    // 相对路径（如 System32\drivers\xxx.sys）按 SystemRoot 解析
     if !path.contains(':') {
         return PathBuf::from(system_root).join(path);
     }
 
-    // 带参数的路径（如 "C:\x\y.exe" -autorun）截断到 .exe/.sys
     for ext in [".exe", ".sys", ".dll"] {
         if let Some(pos) = path.to_lowercase().find(ext) {
             return PathBuf::from(&path[..pos + ext.len()]);
@@ -1967,12 +1888,104 @@ fn start_type_text(start: u32) -> &'static str {
     }
 }
 
+/// 从 Steam 的 libraryfolders.vdf 读出所有游戏库根目录
+fn steam_library_roots() -> Vec<PathBuf> {
+    let mut steam_roots: Vec<PathBuf> = Vec::new();
+
+    // 注册表里记录的 Steam 安装位置（最常见的情况不在 Program Files）
+    for (hive, key, value) in [
+        (HKEY_CURRENT_USER, r"Software\Valve\Steam", "SteamPath"),
+        (HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Valve\Steam", "InstallPath"),
+    ] {
+        if let Ok(steam) = RegKey::predef(hive).open_subkey(key) {
+            if let Ok(path) = steam.get_value::<String, _>(value) {
+                let candidate = PathBuf::from(path.replace('/', "\\"));
+                if candidate.is_dir() {
+                    steam_roots.push(candidate);
+                }
+            }
+        }
+    }
+
+    for env in ["ProgramFiles(x86)", "ProgramFiles"] {
+        if let Some(base) = std::env::var_os(env) {
+            let candidate = PathBuf::from(base).join("Steam");
+            if candidate.is_dir() {
+                steam_roots.push(candidate);
+            }
+        }
+    }
+
+    let mut libraries: Vec<PathBuf> = steam_roots.clone();
+
+    for steam in &steam_roots {
+        let vdf = steam.join("steamapps").join("libraryfolders.vdf");
+        if let Ok(text) = std::fs::read_to_string(&vdf) {
+            for line in text.lines() {
+                if !line.contains("\"path\"") {
+                    continue;
+                }
+
+                if let Some(value) = line.split('"').nth(3) {
+                    let path = PathBuf::from(value.replace("\\\\", "\\"));
+                    if path.is_dir() {
+                        libraries.push(path);
+                    }
+                }
+            }
+        }
+    }
+
+    libraries.sort();
+    libraries.dedup();
+    libraries
+}
+
+/// 在游戏目录内浅层查找游戏自带的 ACE 副本
+fn scan_ace_dirs(root: &Path, depth: usize, budget: &mut usize, found: &mut Vec<PathBuf>) {
+    if depth == 0 || *budget == 0 {
+        return;
+    }
+
+    let entries = match std::fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+
+    for entry in entries.flatten() {
+        *budget = budget.saturating_sub(1);
+        if *budget == 0 {
+            return;
+        }
+
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+
+        let name = entry.file_name().to_string_lossy().to_lowercase();
+        if name == "anticheatexpert" {
+            found.push(path);
+            continue;
+        }
+
+        // 跳过明显的资源目录，控制扫描成本
+        if matches!(
+            name.as_str(),
+            "content" | "movies" | "audio" | "sound" | "textures" | "paks" | "localization"
+        ) {
+            continue;
+        }
+
+        scan_ace_dirs(&path, depth - 1, budget, found);
+    }
+}
+
 #[tauri::command]
 async fn get_ace_report() -> AceReport {
     let mut processes = Vec::new();
     let mut services = Vec::new();
     let mut drivers = Vec::new();
-    let mut directories = Vec::new();
     let mut items = Vec::new();
 
     // 进程
@@ -1987,21 +2000,32 @@ async fn get_ace_report() -> AceReport {
         "aceservice",
     ];
 
+    let mut referenced_paths: Vec<PathBuf> = Vec::new();
+    let mut process_dirs: Vec<PathBuf> = Vec::new();
+
     for (pid, process) in system.processes() {
         let name = process.name().to_string_lossy().to_lowercase();
         let stem = name.trim_end_matches(".exe");
 
-        if wanted.contains(&stem) {
-            let path = process
-                .exe()
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_default();
-            processes.push(format!("{} (PID {}) {}", process.name().to_string_lossy(), pid, path));
+        if !wanted.contains(&stem) {
+            continue;
+        }
+
+        let exe = process
+            .exe()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_default();
+        processes.push(format!("{} (PID {}) {}", process.name().to_string_lossy(), pid, exe.to_string_lossy()));
+
+        if let Some(parent) = exe.parent() {
+            process_dirs.push(parent.to_path_buf());
+            referenced_paths.push(exe);
         }
     }
 
-    // 服务与驱动：直接枚举 Services 注册表，覆盖 ace-base 这类改名后的形态
+    // 服务与驱动：遍历 Services 注册表，覆盖 ace-base 这类改名形态
     let mut orphan_count = 0usize;
+    let mut service_dirs: Vec<PathBuf> = Vec::new();
     let services_key = RegKey::predef(HKEY_LOCAL_MACHINE)
         .open_subkey(r"SYSTEM\CurrentControlSet\Services")
         .ok();
@@ -2037,6 +2061,11 @@ async fn get_ace_report() -> AceReport {
                 orphan_count += 1;
             }
 
+            if let Some(parent) = resolved.parent() {
+                service_dirs.push(parent.to_path_buf());
+            }
+            referenced_paths.push(resolved.clone());
+
             let state = query_service_state(&name).unwrap_or_else(|| "未知".to_string());
             let line = format!(
                 "{} | {} | {} | {} | {}",
@@ -2047,7 +2076,6 @@ async fn get_ace_report() -> AceReport {
                 resolved.to_string_lossy()
             );
 
-            // Type: 0x1 内核驱动, 0x2 文件系统驱动；0x10/0x20 为用户态服务
             if service_type & 0x3 != 0 {
                 drivers.push(line);
             } else {
@@ -2056,60 +2084,108 @@ async fn get_ace_report() -> AceReport {
         }
     }
 
-    // 目录
-    let mut dir_paths = vec![
-        PathBuf::from(r"C:\Program Files\AntiCheatExpert"),
-        PathBuf::from(r"C:\ProgramData\AntiCheatExpert"),
-    ];
-    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
-        dir_paths.push(PathBuf::from(local).join("AntiCheatExpert"));
+    // 收集所有可能的安装位置
+    let mut candidates: Vec<(PathBuf, &'static str)> = Vec::new();
+
+    if let Some(program_files) = std::env::var_os("ProgramFiles") {
+        let global = PathBuf::from(program_files).join("AntiCheatExpert");
+        if global.is_dir() {
+            candidates.push((global, "全局安装"));
+        }
     }
 
-    for dir in &dir_paths {
-        if !dir.is_dir() {
+    if let Some(program_data) = std::env::var_os("ProgramData") {
+        let data = PathBuf::from(program_data).join("AntiCheatExpert");
+        if data.is_dir() {
+            candidates.push((data, "数据目录"));
+        }
+    }
+
+    for dir in process_dirs {
+        candidates.push((dir, "进程所在目录"));
+    }
+
+    for dir in service_dirs {
+        candidates.push((dir, "服务/驱动目录"));
+    }
+
+    // 游戏库内自带的副本
+    let mut game_dirs: Vec<PathBuf> = Vec::new();
+    let mut budget = 8000usize;
+    for library in steam_library_roots() {
+        let common = library.join("steamapps").join("common");
+        if !common.is_dir() {
             continue;
         }
-
-        let mut files = 0usize;
-        let mut bytes = 0u64;
-        if let Ok(entries) = std::fs::read_dir(dir) {
+        if let Ok(entries) = std::fs::read_dir(&common) {
             for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_file() {
-                    files += 1;
-                    bytes += path.metadata().map(|m| m.len()).unwrap_or(0);
-                } else if path.is_dir() {
-                    let nested = std::fs::read_dir(&path)
-                        .map(|it| it.flatten().count())
-                        .unwrap_or(0);
-                    files += nested;
-                    bytes += path_size(&path);
+                let game_root = entry.path();
+                if game_root.is_dir() {
+                    scan_ace_dirs(&game_root, 3, &mut budget, &mut game_dirs);
                 }
             }
         }
-
-        let mtime = dir
-            .metadata()
-            .and_then(|m| m.modified())
-            .map(|t| {
-                let secs = t
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
-                secs.to_string()
-            })
-            .unwrap_or_default();
-
-        directories.push(format!(
-            "{} | {} 个文件 | {:.1} MB | 修改时间戳 {}",
-            dir.to_string_lossy(),
-            files,
-            bytes as f64 / 1024.0 / 1024.0,
-            mtime
-        ));
+    }
+    for dir in game_dirs {
+        candidates.push((dir, "游戏内置副本"));
     }
 
-    let installed = !directories.is_empty() || !services.is_empty() || !drivers.is_empty();
+    // 去重 + 排除被其他候选目录包含的子目录
+    let mut installations: Vec<AceInstallation> = Vec::new();
+    let mut seen: Vec<String> = Vec::new();
+
+    let system_root = std::env::var("SystemRoot")
+        .unwrap_or_else(|_| r"C://Windows".to_string())
+        .to_lowercase();
+
+    for (path, kind) in candidates {
+        let key = path.to_string_lossy().to_lowercase();
+        if seen.contains(&key) {
+            continue;
+        }
+        if !path.is_dir() {
+            continue;
+        }
+        // 系统目录只是驱动落地位置，不算 ACE 安装
+        if key.starts_with(&system_root) {
+            continue;
+        }
+
+        seen.push(key.clone());
+
+        let (files, bytes) = dir_footprint(&path);
+        let lowered_path = key;
+        let active = referenced_paths.iter().any(|referenced| {
+            referenced
+                .to_string_lossy()
+                .to_lowercase()
+                .starts_with(&lowered_path)
+        });
+
+        installations.push(AceInstallation {
+            path: path.to_string_lossy().to_string(),
+            kind: kind.to_string(),
+            size_mb: (bytes as f64 / 1024.0 / 1024.0 * 10.0).round() / 10.0,
+            files,
+            active,
+        });
+    }
+
+    // 去掉被父目录覆盖的条目（同一份安装只保留最外层）
+    installations.sort_by(|a, b| a.path.len().cmp(&b.path.len()));
+    let mut filtered: Vec<AceInstallation> = Vec::new();
+    for installation in installations {
+        let lowered = installation.path.to_lowercase();
+        if filtered
+            .iter()
+            .any(|kept| lowered.starts_with(&kept.path.to_lowercase()))
+        {
+            continue;
+        }
+        filtered.push(installation);
+    }
+
+    let installed = !filtered.is_empty() || !services.is_empty() || !drivers.is_empty();
 
     if !installed {
         items.push(ace_item(
@@ -2123,6 +2199,25 @@ async fn get_ace_report() -> AceReport {
             "检测到 ACE 安装",
             "安装目录、服务或驱动至少存在一项，说明 ACE 已在本机落地。",
         ));
+
+        let install_roots: Vec<&AceInstallation> = filtered
+            .iter()
+            .filter(|item| item.kind != "数据目录")
+            .collect();
+        let active_count = install_roots.iter().filter(|item| item.active).count();
+
+        if install_roots.len() > 1 {
+            items.push(ace_item(
+                "warn",
+                &format!("检测到 {} 处 ACE 副本", install_roots.len()),
+                &format!(
+                    "其中 {} 处正在被进程或服务引用。游戏目录内的副本属于游戏本体，删除后启动器会重新校验下载，不建议手动清理。",
+                    active_count
+                ),
+            ));
+        } else if install_roots.len() == 1 {
+            items.push(ace_item("ok", "只有一处 ACE 安装", "没有发现重复副本。"));
+        }
 
         if processes.is_empty() {
             items.push(ace_item(
@@ -2146,9 +2241,8 @@ async fn get_ace_report() -> AceReport {
             ));
         }
 
-        // 驱动包与系统实际加载版本的时间差（启发式）
-        let loaded = PathBuf::from(r"C:\Windows\System32\drivers\ACE-BASE.sys");
-        let packaged = PathBuf::from(r"C:\Program Files\AntiCheatExpert\ACE-BASE.sys");
+        let loaded = PathBuf::from(r"C:/Windows/System32/drivers/ACE-BASE.sys");
+        let packaged = PathBuf::from(r"C:/Program Files/AntiCheatExpert/ACE-BASE.sys");
         if let (Ok(loaded_meta), Ok(packaged_meta)) = (loaded.metadata(), packaged.metadata()) {
             if let (Ok(loaded_time), Ok(packaged_time)) = (loaded_meta.modified(), packaged_meta.modified()) {
                 if packaged_time > loaded_time {
@@ -2160,14 +2254,6 @@ async fn get_ace_report() -> AceReport {
                 }
             }
         }
-
-        if items.iter().all(|item| item.level != "warn") && orphan_count == 0 {
-            items.push(ace_item(
-                "ok",
-                "服务、驱动、目录检查一致",
-                "未发现孤儿项或版本差异。",
-            ));
-        }
     }
 
     AceReport {
@@ -2175,12 +2261,12 @@ async fn get_ace_report() -> AceReport {
         processes,
         services,
         drivers,
-        directories,
+        installations: filtered,
         items,
     }
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -2240,8 +2326,6 @@ pub fn run() {
             get_memory_clean_status,
             clean_memory_and_temp,
             sync_tray_state,
-            get_shader_cache_info,
-            clean_shader_caches,
             get_ace_report,
 
         ])

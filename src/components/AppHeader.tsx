@@ -7,7 +7,6 @@ import {
   Typography,
 } from '@mui/material';
 import {
-  CleaningServices as CacheIcon,
   DarkMode as DarkModeIcon,
   GitHub as GitHubIcon,
   LightMode as LightModeIcon,
@@ -23,7 +22,6 @@ interface AppHeaderProps {
   darkMode: boolean;
   onOpenAnnouncements: () => void;
   onOpenUpdates: () => void;
-  onOpenCacheClean: () => void;
   onOpenBilibiliHome: () => void | Promise<void>;
   onOpenRepository: () => void | Promise<void>;
   onToggleTheme: () => void;
@@ -36,7 +34,6 @@ export function AppHeader({
   darkMode,
   onOpenAnnouncements,
   onOpenUpdates,
-  onOpenCacheClean,
   onOpenBilibiliHome,
   onOpenRepository,
   onToggleTheme,
@@ -83,16 +80,6 @@ export function AppHeader({
               更新
             </Button>
           </Badge>
-          <Button
-            variant="outlined"
-            startIcon={<CacheIcon />}
-            onClick={onOpenCacheClean}
-            sx={{ minWidth: 'auto', px: 0.8 }}
-            size="small"
-            color="info"
-          >
-            缓存清理
-          </Button>
           <Button
             variant="outlined"
             startIcon={<VideoLibraryIcon />}

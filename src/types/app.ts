@@ -74,22 +74,6 @@ export interface MemoryCleanResult {
   messages: string[];
 }
 
-export interface ShaderCacheItem {
-  label: string;
-  path: string;
-  bytes: number;
-}
-
-export interface ShaderCacheInfo {
-  total_bytes: number;
-  items: ShaderCacheItem[];
-}
-
-export interface ShaderCleanResult {
-  freed_bytes: number;
-  removed_count: number;
-  skipped_count: number;
-}
 
 export interface AceReportItem {
   level: 'ok' | 'warn' | 'info' | string;
@@ -97,11 +81,19 @@ export interface AceReportItem {
   detail: string;
 }
 
+export interface AceInstallation {
+  path: string;
+  kind: string;
+  size_mb: number;
+  files: number;
+  active: boolean;
+}
+
 export interface AceReport {
   installed: boolean;
   processes: string[];
   services: string[];
   drivers: string[];
-  directories: string[];
+  installations: AceInstallation[];
   items: AceReportItem[];
 }
