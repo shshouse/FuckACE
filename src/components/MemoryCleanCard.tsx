@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { RocketLaunch as RocketIcon } from '@mui/icons-material';
 import {
   Box,
@@ -32,6 +32,14 @@ export function MemoryCleanCard({
   onThresholdChange,
   onCleanNow,
 }: MemoryCleanCardProps) {
+  const lastThresholdRef = useRef(85);
+
+  useEffect(() => {
+    if (autoMemoryCleanThreshold !== null) {
+      lastThresholdRef.current = autoMemoryCleanThreshold;
+    }
+  }, [autoMemoryCleanThreshold]);
+
   const memoryPercent = useMemo(() => {
     if (!status) return 0;
     return Math.min(100, Math.max(0, status.memory_percent));
@@ -80,7 +88,7 @@ export function MemoryCleanCard({
               <Switch
                 size="small"
                 checked={autoMemoryCleanThreshold !== null}
-                onChange={(event) => onThresholdChange(event.target.checked ? 85 : null)}
+                onChange={(event) => onThresholdChange(event.target.checked ? lastThresholdRef.current : null)}
                 color="primary"
                 sx={{ transform: 'scale(0.75)', m: 0 }}
               />

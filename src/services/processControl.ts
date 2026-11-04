@@ -173,6 +173,22 @@ export const gameOptimizationActions: GameOptimizationAction[] = [
     successMessage: '卡拉比丘优先级修改完成:',
     errorMessage: '提高卡拉比丘优先级失败',
   },
+  {
+    id: 'nba2kol2',
+    label: 'NBA2KOL2优化',
+    command: 'raise_nba2kol2_priority',
+    startMessage: '开始提高NBA2KOL2优先级...',
+    successMessage: 'NBA2KOL2优先级修改完成:',
+    errorMessage: '提高NBA2KOL2优先级失败',
+  },
+  {
+    id: 'cfhd',
+    label: 'CF HD优化',
+    command: 'raise_cfhd_priority',
+    startMessage: '开始提高CF HD优先级...',
+    successMessage: 'CF HD优先级修改完成:',
+    errorMessage: '提高CF HD优先级失败',
+  },
 ];
 
 export async function getSystemInfo() {

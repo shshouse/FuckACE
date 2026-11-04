@@ -349,8 +349,15 @@ function App() {
   }, [addLog, perfHistory, systemInfo]);
 
   useEffect(() => {
-    if (logContainerRef.current) {
-      logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+    const container = logContainerRef.current;
+    if (!container) {
+      return;
+    }
+
+    // 用户上翻查看历史时不要被新日志拽回底部
+    const distanceToBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    if (distanceToBottom < 24) {
+      container.scrollTop = container.scrollHeight;
     }
   }, [logs]);
 
@@ -682,7 +689,7 @@ function App() {
               loading={loading}
               isMonitoring={isMonitoring}
               affinityCustomized={affinityCores.length > 0}
-              targetCores={targetCores}
+              targetCores={affinityCores.length > 0 ? affinityCores : targetCores}
               gameProcesses={gameProcesses}
               processStatus={processStatus}
               onSettingChange={handleSettingChange}

@@ -109,6 +109,9 @@ const ALL_MONITORED_EXE_NAMES: &[&str] = &[
     "TheDivision2.exe",
     "Endfield.exe",
     "Calabiyau-Win64-Shipping.exe",
+    "NBA2KOL2.exe",
+    "CFHD.exe",
+    "CFHD-The10thZone.exe",
 ];
 
 fn set_game_registry_priority(exe_name: &str, cpu: u32, io: u32) -> Result<String, String> {
@@ -1388,6 +1391,23 @@ async fn raise_calabiyau_priority() -> Result<String, String> {
 }
 
 #[tauri::command]
+async fn raise_nba2kol2_priority() -> Result<String, String> {
+    if !is_elevated() { return Err("需要管理员权限才能修改注册表".to_string()); }
+    set_game_registry_priority("NBA2KOL2.exe", 3, 3)
+}
+
+#[tauri::command]
+async fn raise_cfhd_priority() -> Result<String, String> {
+    if !is_elevated() { return Err("需要管理员权限才能修改注册表".to_string()); }
+    // CF HD 在不同渠道/模式下进程名不一致，两个已知名字都写入
+    let results: Vec<String> = ["CFHD.exe", "CFHD-The10thZone.exe"]
+        .iter()
+        .map(|name| set_game_registry_priority(name, 3, 3).unwrap_or_else(|e| e))
+        .collect();
+    Ok(results.join("\n"))
+}
+
+#[tauri::command]
 async fn check_registry_priority() -> Result<String, String> {
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
     let base_path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options";
@@ -2323,6 +2343,8 @@ pub fn run() {
             raise_division2_priority,
             raise_endfield_priority,
             raise_calabiyau_priority,
+            raise_nba2kol2_priority,
+            raise_cfhd_priority,
             get_memory_clean_status,
             clean_memory_and_temp,
             sync_tray_state,

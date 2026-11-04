@@ -50,6 +50,11 @@ export function AnnouncementsDialog({
         </Box>
       </DialogTitle>
       <DialogContent dividers>
+        {announcements.length === 0 && (
+          <Typography variant="body2" color="text.secondary">
+            暂无公告
+          </Typography>
+        )}
         {announcements.map((announcement) => (
           <Alert
             key={announcement.id}
