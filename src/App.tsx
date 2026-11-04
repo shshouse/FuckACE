@@ -13,7 +13,9 @@ import { PerformancePanel } from './components/PerformancePanel';
 import { RestrictionControlCard } from './components/RestrictionControlCard';
 import { SystemInfoCard } from './components/SystemInfoCard';
 import { AnnouncementsDialog } from './components/dialogs/AnnouncementsDialog';
+import { AceInspectionDialog } from './components/dialogs/AceInspectionDialog';
 import { RiskSettingDialog } from './components/dialogs/RiskSettingDialog';
+import { ShaderCacheDialog } from './components/dialogs/ShaderCacheDialog';
 import { UpdateDialog } from './components/dialogs/UpdateDialog';
 import { APP_VERSION } from './constants';
 import { useInitialData } from './services/api';
@@ -22,6 +24,7 @@ import {
   checkAutoStartStatus,
   checkRegistryPriorityCommand,
   cleanMemoryAndTemp,
+  cleanShaderCaches,
   executeTextCommand,
   gameOptimizationActions,
   getMemoryCleanStatus,
@@ -88,6 +91,8 @@ function App() {
   const [showAnnouncements, setShowAnnouncements] = useState(false);
   const [showUpdateDialog, setShowUpdateDialog] = useState(false);
   const [showAffinityDialog, setShowAffinityDialog] = useState(false);
+  const [showCacheDialog, setShowCacheDialog] = useState(false);
+  const [showAceInspection, setShowAceInspection] = useState(false);
   const [pendingRiskSetting, setPendingRiskSetting] = useState<RestrictionSettingKey | null>(null);
   const [affinityCores, setAffinityCores] = useState<number[]>([]);
   const [exportingReport, setExportingReport] = useState(false);
@@ -263,8 +268,16 @@ function App() {
     }
   }, [addLog, cleaning, fetchMemoryStatus]);
 
-  const checkAutoStart = useCallback(async () => {
-    try {
+  const handleCleanShaderCaches = useCallback(async () => {
+    const result = await cleanShaderCaches();
+    const skippedPart = result.skipped_count > 0 ? `，${result.skipped_count} 项被占用跳过` : '';
+    addLog(
+      `着色器缓存清理完成：${result.removed_count} 项，释放 ${(result.freed_bytes / 1024 / 1024).toFixed(1)} MB${skippedPart}`,
+    );
+    return result;
+  }, [addLog]);
+
+  const checkAutoStart = useCallback(async () => {    try {
       const enabled = await checkAutoStartStatus();
       setAutoStartEnabled(enabled);
     } catch (error) {
@@ -634,6 +647,7 @@ function App() {
           darkMode={darkMode}
           onOpenAnnouncements={openAnnouncements}
           onOpenUpdates={() => setShowUpdateDialog(true)}
+          onOpenCacheClean={() => setShowCacheDialog(true)}
           onOpenBilibiliHome={() => {
             void openExternalLink('https://space.bilibili.com/309820452');
           }}
@@ -687,6 +701,7 @@ function App() {
               onSettingChange={handleSettingChange}
               onToggleAutoStartup={toggleAutoStartup}
               onOpenAffinitySettings={() => setShowAffinityDialog(true)}
+              onOpenAceInspection={() => setShowAceInspection(true)}
               onExecute={executeOnce}
             />
           </Box>
@@ -726,6 +741,17 @@ function App() {
           settingLabel={pendingRiskSetting ? riskySettingLabels[pendingRiskSetting] ?? '' : ''}
           onCancel={() => setPendingRiskSetting(null)}
           onConfirm={confirmPendingRiskSetting}
+        />
+
+        <ShaderCacheDialog
+          open={showCacheDialog}
+          onClose={() => setShowCacheDialog(false)}
+          onCleanCaches={handleCleanShaderCaches}
+        />
+
+        <AceInspectionDialog
+          open={showAceInspection}
+          onClose={() => setShowAceInspection(false)}
         />
 
         <FetchErrorSnackbar open={fetchError} />

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 use sysinfo::{Pid, ProcessesToUpdate, System};
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
@@ -1719,6 +1720,466 @@ fn get_desktop_path() -> Result<std::path::PathBuf, String> {
     Err("无法获取桌面路径".to_string())
 }
 
+// ===== 着色器缓存清理 =====
+
+#[derive(Debug, Serialize)]
+struct ShaderCacheItem {
+    label: String,
+    path: String,
+    bytes: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct ShaderCacheInfo {
+    total_bytes: u64,
+    items: Vec<ShaderCacheItem>,
+}
+
+#[derive(Debug, Serialize)]
+struct ShaderCleanResult {
+    freed_bytes: u64,
+    removed_count: usize,
+    skipped_count: usize,
+}
+
+/// 只覆盖显卡驱动与 DirectX 的通用着色器缓存目录，均为可再生成的缓存文件
+fn shader_cache_targets() -> Vec<(&'static str, PathBuf)> {
+    let mut targets = Vec::new();
+
+    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+        let base = PathBuf::from(local);
+        let candidates = [
+            ("DirectX 着色器缓存", "D3DSCache"),
+            ("NVIDIA DXCache", "NVIDIA\\DXCache"),
+            ("NVIDIA GLCache", "NVIDIA\\GLCache"),
+            ("AMD DxCache", "AMD\\DxCache"),
+            ("AMD DxcCache", "AMD\\DxcCache"),
+            ("Intel 着色器缓存", "Intel\\ShaderCache"),
+        ];
+
+        for (label, relative) in candidates {
+            let path = base.join(relative);
+            if path.is_dir() {
+                targets.push((label, path));
+            }
+        }
+    }
+
+    targets
+}
+
+fn path_size(path: &Path) -> u64 {
+    if let Ok(metadata) = path.metadata() {
+        if metadata.is_file() {
+            return metadata.len();
+        }
+    }
+
+    let mut total = 0u64;
+    if let Ok(entries) = std::fs::read_dir(path) {
+        for entry in entries.flatten() {
+            total += path_size(&entry.path());
+        }
+    }
+    total
+}
+
+#[tauri::command]
+async fn get_shader_cache_info() -> ShaderCacheInfo {
+    let mut items = Vec::new();
+
+    for (label, path) in shader_cache_targets() {
+        let bytes = path_size(&path);
+        if bytes == 0 {
+            continue;
+        }
+
+        items.push(ShaderCacheItem {
+            label: label.to_string(),
+            path: path.to_string_lossy().to_string(),
+            bytes,
+        });
+    }
+
+    items.sort_by(|a, b| b.bytes.cmp(&a.bytes));
+    let total_bytes = items.iter().map(|item| item.bytes).sum();
+
+    ShaderCacheInfo { total_bytes, items }
+}
+
+#[tauri::command]
+async fn clean_shader_caches() -> ShaderCleanResult {
+    let mut freed_bytes = 0u64;
+    let mut removed_count = 0usize;
+    let mut skipped_count = 0usize;
+
+    for (_, path) in shader_cache_targets() {
+        let entries = match std::fs::read_dir(&path) {
+            Ok(entries) => entries,
+            Err(_) => continue,
+        };
+
+        for entry in entries.flatten() {
+            let entry_path = entry.path();
+            let size = path_size(&entry_path);
+            let result = if entry_path.is_dir() {
+                std::fs::remove_dir_all(&entry_path)
+            } else {
+                std::fs::remove_file(&entry_path)
+            };
+
+            match result {
+                Ok(_) => {
+                    freed_bytes += size;
+                    removed_count += 1;
+                }
+                Err(_) => {
+                    // 正在被游戏或驱动占用的缓存文件跳过即可，不视为失败
+                    skipped_count += 1;
+                }
+            }
+        }
+    }
+
+    ShaderCleanResult {
+        freed_bytes,
+        removed_count,
+        skipped_count,
+    }
+}
+
+// ===== ACE 体检（只读诊断） =====
+
+#[derive(Debug, Serialize)]
+struct AceReportItem {
+    level: String,
+    title: String,
+    detail: String,
+}
+
+#[derive(Debug, Serialize)]
+struct AceReport {
+    installed: bool,
+    processes: Vec<String>,
+    services: Vec<String>,
+    drivers: Vec<String>,
+    directories: Vec<String>,
+    items: Vec<AceReportItem>,
+}
+
+fn ace_item(level: &str, title: &str, detail: &str) -> AceReportItem {
+    AceReportItem {
+        level: level.to_string(),
+        title: title.to_string(),
+        detail: detail.to_string(),
+    }
+}
+
+/// 把服务/驱动的 ImagePath 还原成可检查的绝对路径
+fn resolve_image_path(raw: &str) -> PathBuf {
+    let mut path = raw.trim().trim_matches('"').to_string();
+
+    if let Some(stripped) = path.strip_prefix(r"\??\") {
+        path = stripped.to_string();
+    }
+
+    let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_string());
+
+    if let Some(stripped) = path.strip_prefix(r"\SystemRoot\") {
+        return PathBuf::from(format!(r"{}\{}", system_root, stripped));
+    }
+
+    if path.starts_with(r"\SystemRoot") {
+        return PathBuf::from(system_root);
+    }
+
+    // 相对路径（如 System32\drivers\xxx.sys）按 SystemRoot 解析
+    if !path.contains(':') {
+        return PathBuf::from(system_root).join(path);
+    }
+
+    // 带参数的路径（如 "C:\x\y.exe" -autorun）截断到 .exe/.sys
+    for ext in [".exe", ".sys", ".dll"] {
+        if let Some(pos) = path.to_lowercase().find(ext) {
+            return PathBuf::from(&path[..pos + ext.len()]);
+        }
+    }
+
+    PathBuf::from(path)
+}
+
+fn query_service_state(name: &str) -> Option<String> {
+    use windows::core::PCWSTR;
+    use windows::Win32::System::Services::{
+        CloseServiceHandle, OpenSCManagerW, OpenServiceW, QueryServiceStatusEx, SC_MANAGER_CONNECT,
+        SC_STATUS_PROCESS_INFO, SERVICE_QUERY_STATUS, SERVICE_STATUS_PROCESS,
+    };
+
+    let name_wide: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
+
+    unsafe {
+        let scm = OpenSCManagerW(PCWSTR::null(), PCWSTR::null(), SC_MANAGER_CONNECT).ok()?;
+        let service = OpenServiceW(scm, PCWSTR(name_wide.as_ptr()), SERVICE_QUERY_STATUS);
+
+        let state = match service {
+            Ok(handle) => {
+                let mut status = SERVICE_STATUS_PROCESS::default();
+                let mut needed = 0u32;
+                let buffer = std::slice::from_raw_parts_mut(
+                    &mut status as *mut SERVICE_STATUS_PROCESS as *mut u8,
+                    std::mem::size_of::<SERVICE_STATUS_PROCESS>(),
+                );
+                let queried = QueryServiceStatusEx(handle, SC_STATUS_PROCESS_INFO, Some(buffer), &mut needed);
+                let _ = CloseServiceHandle(handle);
+
+                if queried.is_ok() {
+                    let text = match status.dwCurrentState.0 {
+                        1 => "已停止",
+                        2 => "启动中",
+                        3 => "停止中",
+                        4 => "运行中",
+                        5 => "继续中",
+                        6 => "暂停中",
+                        7 => "已暂停",
+                        _ => "未知",
+                    };
+                    Some(text.to_string())
+                } else {
+                    None
+                }
+            }
+            Err(_) => None,
+        };
+
+        let _ = CloseServiceHandle(scm);
+        state
+    }
+}
+
+fn start_type_text(start: u32) -> &'static str {
+    match start {
+        0 => "开机启动",
+        1 => "系统启动",
+        2 => "自动",
+        3 => "手动",
+        4 => "禁用",
+        _ => "未知",
+    }
+}
+
+#[tauri::command]
+async fn get_ace_report() -> AceReport {
+    let mut processes = Vec::new();
+    let mut services = Vec::new();
+    let mut drivers = Vec::new();
+    let mut directories = Vec::new();
+    let mut items = Vec::new();
+
+    // 进程
+    let mut system = System::new();
+    system.refresh_processes(ProcessesToUpdate::All, true);
+    let wanted = [
+        "sguard64",
+        "sguardsvc64",
+        "ace-tray",
+        "ace-service64",
+        "ace-base",
+        "aceservice",
+    ];
+
+    for (pid, process) in system.processes() {
+        let name = process.name().to_string_lossy().to_lowercase();
+        let stem = name.trim_end_matches(".exe");
+
+        if wanted.contains(&stem) {
+            let path = process
+                .exe()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
+            processes.push(format!("{} (PID {}) {}", process.name().to_string_lossy(), pid, path));
+        }
+    }
+
+    // 服务与驱动：直接枚举 Services 注册表，覆盖 ace-base 这类改名后的形态
+    let mut orphan_count = 0usize;
+    let services_key = RegKey::predef(HKEY_LOCAL_MACHINE)
+        .open_subkey(r"SYSTEM\CurrentControlSet\Services")
+        .ok();
+
+    if let Some(root) = services_key {
+        for name in root.enum_keys().flatten() {
+            let key = match root.open_subkey(&name) {
+                Ok(key) => key,
+                Err(_) => continue,
+            };
+
+            let image_path: String = match key.get_value("ImagePath") {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+
+            let lowered = image_path.to_lowercase();
+            let is_ace = lowered.contains("anticheatexpert")
+                || lowered.contains(r"\ace-")
+                || lowered.contains("ace-base")
+                || lowered.contains("sguard");
+
+            if !is_ace {
+                continue;
+            }
+
+            let service_type: u32 = key.get_value("Type").unwrap_or(0);
+            let start: u32 = key.get_value("Start").unwrap_or(3);
+            let resolved = resolve_image_path(&image_path);
+            let exists = resolved.exists();
+
+            if !exists {
+                orphan_count += 1;
+            }
+
+            let state = query_service_state(&name).unwrap_or_else(|| "未知".to_string());
+            let line = format!(
+                "{} | {} | {} | {} | {}",
+                name,
+                state,
+                start_type_text(start),
+                if exists { "文件存在" } else { "文件缺失" },
+                resolved.to_string_lossy()
+            );
+
+            // Type: 0x1 内核驱动, 0x2 文件系统驱动；0x10/0x20 为用户态服务
+            if service_type & 0x3 != 0 {
+                drivers.push(line);
+            } else {
+                services.push(line);
+            }
+        }
+    }
+
+    // 目录
+    let mut dir_paths = vec![
+        PathBuf::from(r"C:\Program Files\AntiCheatExpert"),
+        PathBuf::from(r"C:\ProgramData\AntiCheatExpert"),
+    ];
+    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+        dir_paths.push(PathBuf::from(local).join("AntiCheatExpert"));
+    }
+
+    for dir in &dir_paths {
+        if !dir.is_dir() {
+            continue;
+        }
+
+        let mut files = 0usize;
+        let mut bytes = 0u64;
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    files += 1;
+                    bytes += path.metadata().map(|m| m.len()).unwrap_or(0);
+                } else if path.is_dir() {
+                    let nested = std::fs::read_dir(&path)
+                        .map(|it| it.flatten().count())
+                        .unwrap_or(0);
+                    files += nested;
+                    bytes += path_size(&path);
+                }
+            }
+        }
+
+        let mtime = dir
+            .metadata()
+            .and_then(|m| m.modified())
+            .map(|t| {
+                let secs = t
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                secs.to_string()
+            })
+            .unwrap_or_default();
+
+        directories.push(format!(
+            "{} | {} 个文件 | {:.1} MB | 修改时间戳 {}",
+            dir.to_string_lossy(),
+            files,
+            bytes as f64 / 1024.0 / 1024.0,
+            mtime
+        ));
+    }
+
+    let installed = !directories.is_empty() || !services.is_empty() || !drivers.is_empty();
+
+    if !installed {
+        items.push(ace_item(
+            "info",
+            "未检测到 ACE",
+            "没有找到 ACE 安装目录、服务或驱动。如果游戏正在运行，可能该游戏使用的是内置的轻量版本，或 ACE 尚未初始化。",
+        ));
+    } else {
+        items.push(ace_item(
+            "ok",
+            "检测到 ACE 安装",
+            "安装目录、服务或驱动至少存在一项，说明 ACE 已在本机落地。",
+        ));
+
+        if processes.is_empty() {
+            items.push(ace_item(
+                "warn",
+                "当前没有 ACE 进程",
+                "只能看到服务/驱动。部分游戏把 ACE 合入游戏主程序或以驱动形式接入，此时按进程名识别和限制的方式不适用。",
+            ));
+        } else {
+            items.push(ace_item(
+                "info",
+                &format!("检测到 {} 个 ACE 进程", processes.len()),
+                "进程存在，主动限制可用。",
+            ));
+        }
+
+        if orphan_count > 0 {
+            items.push(ace_item(
+                "info",
+                &format!("{} 个服务/驱动条目暂无对应文件", orphan_count),
+                "这些条目可能是旧版本残留，也可能是游戏运行时临时创建的动态条目，先重启后复查；确认游戏不依赖后再考虑清理。",
+            ));
+        }
+
+        // 驱动包与系统实际加载版本的时间差（启发式）
+        let loaded = PathBuf::from(r"C:\Windows\System32\drivers\ACE-BASE.sys");
+        let packaged = PathBuf::from(r"C:\Program Files\AntiCheatExpert\ACE-BASE.sys");
+        if let (Ok(loaded_meta), Ok(packaged_meta)) = (loaded.metadata(), packaged.metadata()) {
+            if let (Ok(loaded_time), Ok(packaged_time)) = (loaded_meta.modified(), packaged_meta.modified()) {
+                if packaged_time > loaded_time {
+                    items.push(ace_item(
+                        "warn",
+                        "驱动包比系统已加载的更新",
+                        "安装目录里的驱动比系统目录里的新，可能是升级待重启生效；如果重启后仍不一致，建议重新安装 ACE。",
+                    ));
+                }
+            }
+        }
+
+        if items.iter().all(|item| item.level != "warn") && orphan_count == 0 {
+            items.push(ace_item(
+                "ok",
+                "服务、驱动、目录检查一致",
+                "未发现孤儿项或版本差异。",
+            ));
+        }
+    }
+
+    AceReport {
+        installed,
+        processes,
+        services,
+        drivers,
+        directories,
+        items,
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1779,6 +2240,9 @@ pub fn run() {
             get_memory_clean_status,
             clean_memory_and_temp,
             sync_tray_state,
+            get_shader_cache_info,
+            clean_shader_caches,
+            get_ace_report,
 
         ])
         .run(tauri::generate_context!())

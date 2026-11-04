@@ -43,6 +43,7 @@ interface RestrictionControlCardProps {
   onSettingChange: (key: RestrictionSettingKey, checked: boolean) => void;
   onToggleAutoStartup: () => void;
   onOpenAffinitySettings: () => void;
+  onOpenAceInspection: () => void;
   onExecute: () => void;
 }
 
@@ -144,6 +145,7 @@ export function RestrictionControlCard({
   onSettingChange,
   onToggleAutoStartup,
   onOpenAffinitySettings,
+  onOpenAceInspection,
   onExecute,
 }: RestrictionControlCardProps) {
   const renderSettingLabel = (item: SettingItem) => {
@@ -276,6 +278,16 @@ export function RestrictionControlCard({
                 size="small"
                 sx={{ maxWidth: '65%' }}
               />
+            </Box>
+            <Box display="flex" justifyContent="flex-end">
+              <Button
+                size="small"
+                variant="text"
+                onClick={onOpenAceInspection}
+                sx={{ fontSize: '0.68rem', py: 0, minWidth: 'auto' }}
+              >
+                ACE 体检
+              </Button>
             </Box>
           </Box>
 

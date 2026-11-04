@@ -73,3 +73,35 @@ export interface MemoryCleanResult {
   processes_total: number;
   messages: string[];
 }
+
+export interface ShaderCacheItem {
+  label: string;
+  path: string;
+  bytes: number;
+}
+
+export interface ShaderCacheInfo {
+  total_bytes: number;
+  items: ShaderCacheItem[];
+}
+
+export interface ShaderCleanResult {
+  freed_bytes: number;
+  removed_count: number;
+  skipped_count: number;
+}
+
+export interface AceReportItem {
+  level: 'ok' | 'warn' | 'info' | string;
+  title: string;
+  detail: string;
+}
+
+export interface AceReport {
+  installed: boolean;
+  processes: string[];
+  services: string[];
+  drivers: string[];
+  directories: string[];
+  items: AceReportItem[];
+}
