@@ -1053,8 +1053,12 @@ async fn get_process_performance() -> Vec<ProcessPerformance> {
     system.refresh_cpu_all();
     system.refresh_processes(ProcessesToUpdate::All, true);
 
-    std::thread::sleep(std::time::Duration::from_millis(200));
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     system.refresh_processes(ProcessesToUpdate::All, true);
+
+    // sysinfo 返回的是"占单个逻辑核"的百分比，多线程可超过 100；
+    // 除以逻辑核数换成占整机百分比，与任务管理器口径一致
+    let logical_cores = system.cpus().len().max(1) as f32;
 
     let target_names = vec![
         "sguard64.exe",
@@ -1073,7 +1077,7 @@ async fn get_process_performance() -> Vec<ProcessPerformance> {
                 performances.push(ProcessPerformance {
                     pid: pid.as_u32(),
                     name: process.name().to_string_lossy().to_string(),
-                    cpu_usage: process.cpu_usage(),
+                    cpu_usage: process.cpu_usage() / logical_cores,
                     memory_mb: process.memory() as f64 / 1024.0 / 1024.0,
                     // 返回累计字节数,由前端跨采样做差分计算速率;
                     // 窗口增量(read_bytes/written_bytes)只覆盖此处 200ms 刷新间隔,不能直接当速率用

@@ -209,7 +209,7 @@ function calculatePerformanceScore(data: PerfDataPoint[]): PerformanceScoreSumma
   const memoryStats = summarizeMetric(totalMemoryValues);
   const ioStats = summarizeMetric(totalIoValues);
 
-  const cpuSpikeRatio = calculateSpikeRatio(totalCpuValues, 20);
+  const cpuSpikeRatio = calculateSpikeRatio(totalCpuValues, 2);
   const ioSpikeRatio = calculateSpikeRatio(totalIoValues, 1024);
   const stabilityPressure = cpuSpikeRatio * 0.6 + ioSpikeRatio * 0.4;
 
@@ -540,7 +540,7 @@ export async function savePerformanceReport({
 
   const firstChartY = headerHeight;
 
-  drawChart(firstChartY, 'CPU 占用 (%)', '%', [
+  drawChart(firstChartY, 'CPU 占用（占整机 %）', '%', [
     { values: data.map((point) => point.sguard_cpu), color: '#f44336', label: 'SGuard64' },
     { values: data.map((point) => point.sguardsvc_cpu), color: '#ff9800', label: 'SGuardSvc64' },
     { values: data.map((point) => point.acetray_cpu), color: '#42a5f5', label: 'ACE-Tray' },

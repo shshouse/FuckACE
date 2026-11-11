@@ -26,7 +26,7 @@ const chartLegendItems: ReadonlyArray<{ name: string; color: string }> = [
 
 const chartSections: ChartSection[] = [
   {
-    title: 'CPU (%)',
+    title: 'CPU（占整机 %）',
     unit: '%',
     tooltipFormatter: (value: unknown) => `${value}%`,
     lines: [
