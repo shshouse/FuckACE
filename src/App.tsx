@@ -685,6 +685,7 @@ function App() {
             />
             <RestrictionControlCard
               settings={restrictionSettings}
+              isAdmin={isAdmin}
               autoStartEnabled={autoStartEnabled}
               loading={loading}
               isMonitoring={isMonitoring}
